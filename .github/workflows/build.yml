@@ -1,0 +1,70 @@
+name: Build & Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.16.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Determine version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package tarball
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          DIRNAME="hle-webapp-${VERSION#v}"
+          mkdir -p "${DIRNAME}/backend/static"
+          cp -r backend/*.py backend/__init__.py "${DIRNAME}/backend/"
+          cp -r frontend/dist/* "${DIRNAME}/backend/static/"
+          cp run.sh "${DIRNAME}/"
+          cp requirements.txt "${DIRNAME}/"
+          chmod +x "${DIRNAME}/run.sh"
+          tar czf "hle-webapp-${VERSION#v}.tar.gz" "${DIRNAME}"
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG}"
+          gh release upload "${VERSION}" "hle-webapp-${VERSION#v}.tar.gz" --clobber
+
+      - name: Upload artifact (manual builds)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hle-webapp-${{ steps.version.outputs.tag }}
+          path: "hle-webapp-*.tar.gz"

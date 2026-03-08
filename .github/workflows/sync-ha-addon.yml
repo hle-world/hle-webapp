@@ -1,0 +1,58 @@
+name: Sync HA Addon Changes
+
+on:
+  repository_dispatch:
+    types: [ha-addon-changes]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply changes from ha-addon
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          PR_TITLE: ${{ github.event.client_payload.pr_title }}
+          PR_NUM: ${{ github.event.client_payload.pr_number }}
+        run: |
+          # Download shared backend files from ha-addon main
+          for file in models.py hle_api.py tunnel_manager.py __init__.py; do
+            curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/hle/backend/${file}" -o "backend/${file}"
+          done
+
+          # Sync frontend source
+          rm -rf frontend/src frontend/public
+          gh api repos/hle-world/ha-addon/git/trees/main?recursive=1 \
+            --jq '.tree[] | select(.path | startswith("hle/frontend/src/") or startswith("hle/frontend/public/")) | .path' \
+            | while read -r fpath; do
+                dest="${fpath#hle/}"
+                mkdir -p "$(dirname "${dest}")"
+                curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/${fpath}" -o "${dest}"
+              done
+
+          # Copy frontend config files
+          for f in package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html; do
+            curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/hle/frontend/${f}" -o "frontend/${f}" 2>/dev/null || true
+          done
+
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "No changes to sync."
+            exit 0
+          fi
+
+          BRANCH="chore/sync-ha-addon-pr-${PR_NUM}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          git add -A
+          git commit -m "chore: sync changes from ha-addon (PR #${PR_NUM})"
+          git push -u origin "${BRANCH}"
+          gh pr create \
+            --title "chore: sync from ha-addon — ${PR_TITLE}" \
+            --body "Automated sync from ha-addon PR #${PR_NUM}." \
+            --base main

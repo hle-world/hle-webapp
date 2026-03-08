@@ -1,0 +1,38 @@
+name: Sync Client Release
+
+on:
+  repository_dispatch:
+    types: [hle-client-release]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update client version
+        env:
+          CLIENT_VERSION: ${{ github.event.client_payload.version }}
+        run: |
+          sed -i "s/hle-client==[0-9.]*/hle-client==${CLIENT_VERSION}/" requirements.txt
+
+      - name: Create PR
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          CLIENT_VERSION: ${{ github.event.client_payload.version }}
+        run: |
+          BRANCH="chore/sync-client-${CLIENT_VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          git add requirements.txt
+          git commit -m "chore: bump hle-client to ${CLIENT_VERSION}"
+          git push -u origin "${BRANCH}"
+          gh pr create \
+            --title "chore: bump hle-client to ${CLIENT_VERSION}" \
+            --body "Automated sync from hle-client release v${CLIENT_VERSION}." \
+            --base main

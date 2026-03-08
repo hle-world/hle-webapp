@@ -1,0 +1,56 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "requirements.txt"
+      - "run.sh"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip-release]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version from requirements.txt
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CLIENT_VER=$(grep 'hle-client==' requirements.txt | sed 's/hle-client==//')
+          MAJOR_MINOR=$(echo "$CLIENT_VER" | cut -d. -f1-2)
+          EXISTING=$(gh release list --limit 100 | grep -c "v${MAJOR_MINOR}\." || echo "0")
+          PATCH=$((EXISTING))
+          VERSION="${MAJOR_MINOR}.${PATCH}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes "Automated release for hle-webapp ${VERSION}." \
+            --generate-notes
