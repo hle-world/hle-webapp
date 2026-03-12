@@ -24,13 +24,15 @@ jobs:
       - name: Determine version from requirements.txt
         id: version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
         run: |
-          CLIENT_VER=$(grep 'hle-client==' requirements.txt | sed 's/hle-client==//')
+          CLIENT_VER=$(grep 'hle-client==' requirements.txt | sed 's/hle-client==//' | tr -d '[:space:]')
           MAJOR_MINOR=$(echo "$CLIENT_VER" | cut -d. -f1-2)
-          EXISTING=$(gh release list --limit 100 | grep -c "v${MAJOR_MINOR}\." || echo "0")
+          EXISTING=$(gh release list --limit 100 --json tagName -q ".[].tagName" | grep -c "^v${MAJOR_MINOR}\." || true)
+          EXISTING=${EXISTING:-0}
           PATCH=$((EXISTING))
           VERSION="${MAJOR_MINOR}.${PATCH}"
+          echo "Detected client=$CLIENT_VER major_minor=$MAJOR_MINOR existing=$EXISTING → v${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
