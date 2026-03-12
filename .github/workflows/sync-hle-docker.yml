@@ -1,8 +1,8 @@
-name: Sync HA Addon Changes
+name: Sync HLE Docker Changes
 
 on:
   repository_dispatch:
-    types: [ha-addon-changes]
+    types: [hle-docker-changes]
 
 permissions:
   contents: write
@@ -14,30 +14,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply changes from ha-addon
+      - name: Sync frontend and backend from hle-docker
         env:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
           PR_TITLE: ${{ github.event.client_payload.pr_title }}
           PR_NUM: ${{ github.event.client_payload.pr_number }}
         run: |
-          # Download shared backend files from ha-addon main
+          # Sync shared backend files
           for file in models.py hle_api.py tunnel_manager.py __init__.py; do
-            curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/hle/backend/${file}" -o "backend/${file}"
+            curl -sL "https://raw.githubusercontent.com/hle-world/hle-docker/main/backend/${file}" -o "backend/${file}"
           done
 
           # Sync frontend source
           rm -rf frontend/src frontend/public
-          gh api repos/hle-world/ha-addon/git/trees/main?recursive=1 \
-            --jq '.tree[] | select(.path | startswith("hle/frontend/src/") or startswith("hle/frontend/public/")) | .path' \
+          gh api repos/hle-world/hle-docker/git/trees/main?recursive=1 \
+            --jq '.tree[] | select(.path | startswith("frontend/src/") or startswith("frontend/public/")) | .path' \
             | while read -r fpath; do
-                dest="${fpath#hle/}"
-                mkdir -p "$(dirname "${dest}")"
-                curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/${fpath}" -o "${dest}"
+                mkdir -p "$(dirname "${fpath}")"
+                curl -sL "https://raw.githubusercontent.com/hle-world/hle-docker/main/${fpath}" -o "${fpath}"
               done
 
           # Copy frontend config files
           for f in package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html; do
-            curl -sL "https://raw.githubusercontent.com/hle-world/ha-addon/main/hle/frontend/${f}" -o "frontend/${f}" 2>/dev/null || true
+            curl -sL "https://raw.githubusercontent.com/hle-world/hle-docker/main/frontend/${f}" -o "frontend/${f}" 2>/dev/null || true
           done
 
           if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
@@ -45,14 +44,14 @@ jobs:
             exit 0
           fi
 
-          BRANCH="chore/sync-ha-addon-pr-${PR_NUM}"
+          BRANCH="chore/sync-hle-docker-pr-${PR_NUM}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "${BRANCH}"
           git add -A
-          git commit -m "chore: sync changes from ha-addon (PR #${PR_NUM})"
+          git commit -m "chore: sync changes from hle-docker (PR #${PR_NUM})"
           git push -u origin "${BRANCH}"
           gh pr create \
-            --title "chore: sync from ha-addon — ${PR_TITLE}" \
-            --body "Automated sync from ha-addon PR #${PR_NUM}." \
+            --title "chore: sync from hle-docker — ${PR_TITLE}" \
+            --body "Automated sync from hle-docker PR #${PR_NUM}." \
             --base main
