@@ -1,12 +1,18 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Logo } from './components/Logo'
-import type { TunnelStatus } from './api/client'
+import type { TunnelStatus, HaSetupStatus, HaSetupApplyResult } from './api/client'
 import {
   getConfig, updateConfig,
   getTunnels,
+  getHaSetupStatus, applyHaSetup, restartHaCore, dismissHaRestart, pingHa,
 } from './api/client'
 import { TunnelCard } from './components/TunnelCard'
 import { AddTunnelModal } from './components/AddTunnelModal'
+
+// Compile-time flag — resolved by Vite at build time.
+// VITE_APP_MODE=ha-addon → IS_HA = true  (HA-specific UI enabled)
+// VITE_APP_MODE=docker   → IS_HA = false (dead code eliminated by tree-shaking)
+const IS_HA = import.meta.env.VITE_APP_MODE === 'ha-addon'
 
 // ---------------------------------------------------------------------------
 // Shared inline style helpers (reference CSS variables from index.css)
@@ -21,8 +27,28 @@ const btnPrimary: React.CSSProperties = {
   background: 'var(--mint)', color: 'var(--bg)', fontSize: 13, fontWeight: 600,
   fontFamily: 'inherit',
 }
+const btnGhost: React.CSSProperties = {
+  ...btnPrimary, background: 'var(--surface)', border: '1px solid var(--border)',
+  color: 'var(--text-dim)',
+}
+const btnDanger: React.CSSProperties = { ...btnPrimary, background: 'var(--red)', color: '#fff' }
 const btnDisabled: React.CSSProperties = {
   ...btnPrimary, background: 'var(--surface)', color: 'var(--text-xdim)', cursor: 'not-allowed',
+}
+const codeStyle: React.CSSProperties = {
+  background: 'var(--surface)', borderRadius: 6, padding: '10px 14px',
+  fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
+  whiteSpace: 'pre', overflowX: 'auto', margin: 0, lineHeight: 1.7,
+}
+
+function copyBtn(copied: boolean): React.CSSProperties {
+  return {
+    padding: '4px 14px', borderRadius: 5,
+    border: '1px solid var(--border)', cursor: 'pointer',
+    background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 12,
+    alignSelf: 'flex-start', fontFamily: 'inherit',
+    ...(copied ? { color: 'var(--green)', borderColor: 'var(--green-tint-border)' } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -67,19 +93,111 @@ function Section({
 }
 
 // ---------------------------------------------------------------------------
+// HA-only: Restart banner
+// ---------------------------------------------------------------------------
+function RestartBanner({ onRestart, onDismiss }: { onRestart: () => void; onDismiss: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const [phase, setPhase] = useState<'idle' | 'waiting_down' | 'waiting_up'>('idle')
+
+  useEffect(() => {
+    if (phase === 'idle') return
+    let wentDown = phase === 'waiting_down' ? false : true
+    const id = setInterval(async () => {
+      try {
+        const { alive } = await pingHa()
+        if (!wentDown && !alive) wentDown = true
+        if (wentDown && alive) {
+          clearInterval(id)
+          onDismiss()
+        }
+      } catch { /* addon itself unreachable — ignore */ }
+    }, 2000)
+    return () => clearInterval(id)
+  }, [phase, onDismiss])
+
+  async function handleRestart() {
+    setPhase('waiting_down')
+    try { await Promise.resolve(onRestart()) } catch { setPhase('idle') }
+  }
+
+  if (phase !== 'idle') {
+    return (
+      <div style={{
+        background: 'var(--yellow-tint-bg)', border: '1px solid var(--yellow-tint-border)',
+        borderRadius: 'var(--radius)', padding: '14px 18px',
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ fontSize: 18 }}>⏳</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--yellow)' }}>
+            {phase === 'waiting_down' ? 'Waiting for HA to go down…' : 'HA is restarting, waiting for it to come back up…'}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 2 }}>
+            This will clear automatically once HA is back online.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      background: 'var(--yellow-tint-bg)', border: '1px solid var(--yellow-tint-border)',
+      borderRadius: 'var(--radius)', padding: '14px 18px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 18 }}>⚠️</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--yellow)' }}>
+            Home Assistant restart required
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 2 }}>
+            The proxy settings were written to <code style={{ color: 'var(--yellow)', fontFamily: 'var(--font-mono)' }}>configuration.yaml</code>.
+            Restart HA Core to apply them.
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {!confirming ? (
+          <button style={btnPrimary} onClick={() => setConfirming(true)}>
+            Restart HA Now
+          </button>
+        ) : (
+          <>
+            <span style={{ fontSize: 13, color: 'var(--yellow)', alignSelf: 'center' }}>Are you sure?</span>
+            <button style={btnDanger} onClick={handleRestart}>Yes, restart</button>
+            <button style={btnGhost} onClick={() => setConfirming(false)}>Cancel</button>
+          </>
+        )}
+        <button style={btnGhost} onClick={onDismiss} title="Dismiss — I'll restart manually">✕</button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Settings section content
+// haStatus / onHaApplied are only used when IS_HA — omit them in docker builds.
 // ---------------------------------------------------------------------------
 function SettingsContent({
   apiKeySet, onSaved,
+  haStatus, onHaApplied,
 }: {
   apiKeySet: boolean
   onSaved: () => void
+  haStatus?: HaSetupStatus | null
+  onHaApplied?: (subnet: string) => void
 }) {
   const [apiKey, setApiKey] = useState('')
   const [masked, setMasked] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+
+  const [applying, setApplying] = useState(false)
+  const [applyError, setApplyError] = useState('')
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     getConfig().then(cfg => setMasked(cfg.api_key_masked)).catch(() => null)
@@ -97,6 +215,27 @@ function SettingsContent({
     } catch (e) { setError(String(e)) }
     finally { setSaving(false) }
   }
+
+  async function applyHa() {
+    setApplying(true); setApplyError('')
+    try {
+      const result: HaSetupApplyResult = await applyHaSetup()
+      if (result.status === 'applied') onHaApplied?.(result.subnet)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setApplyError(msg)
+    }
+    finally { setApplying(false) }
+  }
+
+  function copySnippet(text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const subnet = (haStatus && 'subnet' in haStatus) ? haStatus.subnet : '172.30.32.0/23'
+  const yamlSnippet = `http:\n  use_x_forwarded_for: true\n  trusted_proxies:\n    - ${subnet}`
 
   return (
     <>
@@ -138,6 +277,90 @@ function SettingsContent({
           </a>
         </p>
       </div>
+
+      {/* HA-only: proxy setup panel */}
+      {IS_HA && haStatus !== undefined && (
+        <>
+          <div style={{ borderTop: '1px solid var(--border)' }} />
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', fontWeight: 500 }}>
+              Home Assistant Proxy Settings
+            </div>
+
+            {haStatus?.status === 'configured' && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'var(--green-tint-bg)', border: '1px solid var(--green-tint-border)', borderRadius: 8,
+                padding: '10px 14px', fontSize: 13, color: 'var(--green)',
+              }}>
+                <span>✓</span>
+                <span><code style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>configuration.yaml</code> is correctly configured.</span>
+              </div>
+            )}
+
+            {haStatus?.status === 'subnet_missing' && (
+              <>
+                <div style={{
+                  background: 'var(--yellow-tint-bg)', border: '1px solid var(--yellow-tint-border)',
+                  borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--yellow)',
+                }}>
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>configuration.yaml</code> has proxy settings but is missing this addon's subnet
+                  (<code style={{ fontFamily: 'var(--font-mono)' }}>{subnet}</code>) from <code style={{ fontFamily: 'var(--font-mono)' }}>trusted_proxies</code>. HA will return 400 errors
+                  until it is added.
+                </div>
+                {applyError && (
+                  <div style={{
+                    background: 'var(--red-tint-bg)', border: '1px solid var(--red-tint-border)',
+                    borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--red)',
+                  }}>
+                    {applyError}
+                  </div>
+                )}
+                <button style={applying ? btnDisabled : btnPrimary} onClick={applyHa} disabled={applying}>
+                  {applying ? 'Writing…' : `Add ${subnet} to trusted_proxies`}
+                </button>
+              </>
+            )}
+
+            {(haStatus?.status === 'not_configured' || haStatus?.status === 'no_file') && (
+              <>
+                <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0 }}>
+                  To expose Home Assistant through a tunnel, HA needs to trust this addon as a reverse proxy.
+                  Click below to add the required settings automatically.
+                </p>
+                {applyError && (
+                  <div style={{
+                    background: 'var(--red-tint-bg)', border: '1px solid var(--red-tint-border)',
+                    borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--red)',
+                  }}>
+                    {applyError}
+                  </div>
+                )}
+                <button style={applying ? btnDisabled : btnPrimary} onClick={applyHa} disabled={applying}>
+                  {applying ? 'Writing…' : 'Apply to configuration.yaml'}
+                </button>
+              </>
+            )}
+
+            {haStatus?.status === 'has_http_section' && (
+              <>
+                <div style={{
+                  background: 'var(--yellow-tint-bg)', border: '1px solid var(--yellow-tint-border)',
+                  borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--yellow)',
+                }}>
+                  Your <code style={{ fontFamily: 'var(--font-mono)' }}>configuration.yaml</code> already has an <code style={{ fontFamily: 'var(--font-mono)' }}>http:</code> section but is missing
+                  the proxy settings. Add these lines to your existing <code style={{ fontFamily: 'var(--font-mono)' }}>http:</code> block manually:
+                </div>
+                <code style={codeStyle}>{'  use_x_forwarded_for: true\n  trusted_proxies:\n    - ' + subnet}</code>
+                <button style={copyBtn(copied)} onClick={() => copySnippet(yamlSnippet)}>
+                  {copied ? '✓ Copied!' : 'Copy'}
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </>
   )
 }
@@ -146,8 +369,47 @@ function SettingsContent({
 // Documentation section content
 // ---------------------------------------------------------------------------
 function DocsContent() {
+  const [copied, setCopied] = useState<string | null>(null)
+
+  function copy(key: string, text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(key); setTimeout(() => setCopied(null), 2000)
+    })
+  }
+
+  const haYaml = 'http:\n  use_x_forwarded_for: true\n  trusted_proxies:\n    - 172.30.32.0/23'
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 4 }}>
+
+      {/* HA-only: exposing Home Assistant section */}
+      {IS_HA && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>Exposing Home Assistant</div>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
+              When you create a tunnel pointing to Home Assistant (e.g.{' '}
+              <code style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>http://homeassistant.local.hass.io:8123</code>),
+              HA needs to trust this addon as a reverse proxy. Without this, HA returns{' '}
+              <code style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>400 Bad Request</code>.
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
+              Go to <strong style={{ color: 'var(--text)' }}>Settings → Home Assistant Proxy Settings</strong> above
+              and click <strong style={{ color: 'var(--text)' }}>Apply to configuration.yaml</strong> — or add this
+              to your <code style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>configuration.yaml</code> manually:
+            </p>
+            <code style={codeStyle}>{haYaml}</code>
+            <button style={copyBtn(copied === 'ha')} onClick={() => copy('ha', haYaml)}>
+              {copied === 'ha' ? '✓ Copied!' : 'Copy'}
+            </button>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
+              After saving, restart Home Assistant core for the changes to take effect.
+            </p>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)' }} />
+        </>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>SSO vs Open tunnels</div>
@@ -158,7 +420,8 @@ function DocsContent() {
         </p>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0, lineHeight: 1.6 }}>
           <strong style={{ color: 'var(--text)' }}>Open</strong> — no authentication. The service is
-          publicly accessible via the tunnel URL. Use this for services with their own auth.
+          publicly accessible via the tunnel URL. Use this for services with their own auth
+          {IS_HA ? ' (e.g. HA itself)' : ''}.
         </p>
       </div>
 
@@ -190,13 +453,22 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false)
   const [loadError, setLoadError] = useState('')
 
-  // Load config to determine if key is set
+  // HA-only state — undefined in docker builds (never rendered)
+  const [haStatus, setHaStatus] = useState<HaSetupStatus | null>(null)
+  const [restartNeeded, setRestartNeeded] = useState(false)
+
   useEffect(() => {
     getConfig().then(cfg => {
       setApiKeySet(cfg.api_key_set)
-      // Auto-open settings if no API key
       if (!cfg.api_key_set) setSettingsOpen(true)
     }).catch(() => { setApiKeySet(false); setSettingsOpen(true) })
+
+    if (IS_HA) {
+      getHaSetupStatus().then(status => {
+        setHaStatus(status)
+        setRestartNeeded(status.restart_pending)
+      }).catch(() => null)
+    }
   }, [])
 
   const loadTunnels = useCallback(async () => {
@@ -214,6 +486,21 @@ export default function App() {
     setApiKeySet(true)
     setSettingsOpen(false)
     loadTunnels()
+  }
+
+  function handleHaApplied() {
+    setHaStatus({ status: 'configured', restart_pending: true })
+    setRestartNeeded(true)
+  }
+
+  function dismissRestartBanner() {
+    setRestartNeeded(false)
+    dismissHaRestart().catch(() => null)
+  }
+
+  async function handleRestart() {
+    dismissRestartBanner()
+    await restartHaCore()
   }
 
   const noKey = apiKeySet === false
@@ -239,6 +526,11 @@ export default function App() {
 
       <main style={{ padding: '20px 24px', maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
+        {/* HA-only: restart banner */}
+        {IS_HA && restartNeeded && (
+          <RestartBanner onRestart={handleRestart} onDismiss={dismissRestartBanner} />
+        )}
+
         {/* Settings section */}
         <Section
           title="Settings"
@@ -256,6 +548,7 @@ export default function App() {
             <SettingsContent
               apiKeySet={apiKeySet}
               onSaved={handleKeySaved}
+              {...(IS_HA ? { haStatus, onHaApplied: handleHaApplied } : {})}
             />
           )}
         </Section>
