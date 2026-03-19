@@ -388,7 +388,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
           )}
           {tunnel.subdomain && !tunnel.public_url && (
             <span style={{ color: 'var(--text-xdim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-              {tunnel.subdomain}.hle.world
+              {tunnel.subdomain.includes('.') ? tunnel.subdomain : `${tunnel.subdomain}.hle.world`}
             </span>
           )}
         </div>
