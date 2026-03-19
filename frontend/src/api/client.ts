@@ -64,6 +64,27 @@ export interface AddonConfig {
   api_key_masked: string
 }
 
+// ── HA-addon-specific types ───────────────────────────────────────────────────
+// Used only when VITE_APP_MODE === 'ha-addon'. Tree-shaken from docker builds.
+
+export interface NetworkInfo {
+  addon_ip: string | null
+  trusted_subnet: string | null
+}
+
+export type HaSetupStatus =
+  | { status: 'configured'; restart_pending: boolean }
+  | { status: 'subnet_missing'; subnet: string; restart_pending: boolean }
+  | { status: 'not_configured'; subnet: string; restart_pending: boolean }
+  | { status: 'has_http_section'; subnet: string; restart_pending: boolean }
+  | { status: 'no_file'; restart_pending: boolean }
+
+export type HaSetupApplyResult =
+  | { status: 'applied'; subnet: string }
+  | { status: 'already_configured' }
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const base = './api'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -121,3 +142,11 @@ export const deleteShareLink = (subdomain: string, linkId: number) =>
 export const getConfig = () => request<AddonConfig>('/config')
 export const updateConfig = (api_key: string) =>
   request<void>('/config', { method: 'POST', body: JSON.stringify({ api_key }) })
+export const getNetworkInfo = () => request<NetworkInfo>('/network-info')
+
+// HA-addon-specific endpoints (tree-shaken from docker builds)
+export const getHaSetupStatus = () => request<HaSetupStatus>('/ha-setup/status')
+export const applyHaSetup = () => request<HaSetupApplyResult>('/ha-setup/apply', { method: 'POST' })
+export const restartHaCore = () => request<{ status: string }>('/ha-setup/restart', { method: 'POST' })
+export const dismissHaRestart = () => request<void>('/ha-setup/dismiss', { method: 'POST' })
+export const pingHa = () => request<{ alive: boolean }>('/ha-ping')

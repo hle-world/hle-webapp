@@ -16,8 +16,9 @@ from backend.models import (
     UpdateTunnelRequest,
 )
 
-LOG_DIR = Path("/data/logs")
-DATA_FILE = Path("/data/tunnels.json")
+_DATA_DIR = Path(os.environ.get("HLE_DATA_DIR", "/var/lib/hle"))
+LOG_DIR = _DATA_DIR / "logs"
+DATA_FILE = _DATA_DIR / "tunnels.json"
 
 _processes: dict[str, asyncio.subprocess.Process] = {}
 
