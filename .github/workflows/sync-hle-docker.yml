@@ -28,7 +28,7 @@ jobs:
           # Sync frontend source
           rm -rf frontend/src frontend/public
           gh api repos/hle-world/hle-docker/git/trees/main?recursive=1 \
-            --jq '.tree[] | select(.path | startswith("frontend/src/") or startswith("frontend/public/")) | .path' \
+            --jq '.tree[] | select(.type == "blob") | select(.path | startswith("frontend/src/") or startswith("frontend/public/")) | .path' \
             | while read -r fpath; do
                 mkdir -p "$(dirname "${fpath}")"
                 curl -sL "https://raw.githubusercontent.com/hle-world/hle-docker/main/${fpath}" -o "${fpath}"
