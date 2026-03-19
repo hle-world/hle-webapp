@@ -21,32 +21,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine version from requirements.txt
+      - name: Determine version
         id: version
         env:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
         run: |
           CLIENT_VER=$(grep 'hle-client==' requirements.txt | sed 's/hle-client==//' | tr -d '[:space:]')
           MAJOR_MINOR=$(echo "$CLIENT_VER" | cut -d. -f1-2)
-          EXISTING=$(gh release list --limit 100 --json tagName -q ".[].tagName" | grep -c "^v${MAJOR_MINOR}\." || true)
-          EXISTING=${EXISTING:-0}
-          PATCH=$((EXISTING))
+          # Find the highest existing patch for this major.minor and bump by 1
+          LATEST=$(gh release list --limit 100 --json tagName -q ".[].tagName" \
+            | grep "^v${MAJOR_MINOR}\." | sort -V | tail -1)
+          if [ -z "$LATEST" ]; then
+            PATCH=0
+          else
+            LATEST_PATCH=$(echo "$LATEST" | cut -d. -f3)
+            PATCH=$((LATEST_PATCH + 1))
+          fi
           VERSION="${MAJOR_MINOR}.${PATCH}"
-          echo "Detected client=$CLIENT_VER major_minor=$MAJOR_MINOR existing=$EXISTING → v${VERSION}"
+          echo "client=$CLIENT_VER latest=${LATEST:-none} → v${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Check if tag exists
-        id: check
-        run: |
-          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create release
-        if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
           TAG: ${{ steps.version.outputs.tag }}
