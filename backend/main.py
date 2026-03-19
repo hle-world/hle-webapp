@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "logs").mkdir(exist_ok=True)
     (DATA_DIR / "favicons").mkdir(exist_ok=True)
+    # Restore API key from persisted config if not already set in environment
+    if not os.environ.get("HLE_API_KEY") and HLE_CONFIG.exists():
+        try:
+            api_key = json.loads(HLE_CONFIG.read_text()).get("api_key", "")
+            if api_key:
+                os.environ["HLE_API_KEY"] = api_key
+        except Exception:
+            pass
     await tm.restore_all()
     yield
     await tm.shutdown_all()
