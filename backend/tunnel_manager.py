@@ -16,8 +16,9 @@ from backend.models import (
     UpdateTunnelRequest,
 )
 
-LOG_DIR = Path("/data/logs")
-DATA_FILE = Path("/data/tunnels.json")
+_DATA_DIR = Path(os.environ.get("HLE_DATA_DIR", "/var/lib/hle"))
+LOG_DIR = _DATA_DIR / "logs"
+DATA_FILE = _DATA_DIR / "tunnels.json"
 
 _processes: dict[str, asyncio.subprocess.Process] = {}
 
@@ -122,11 +123,13 @@ def _parse_status_line(cfg_id: str, line: str) -> None:
         if "url=https://" in line:
             try:
                 url_part = line.split("url=https://", 1)[1].split()[0]
-                subdomain = url_part.split(".hle.world")[0]
-                if subdomain:
+                # Store the full hostname — for default zone this is
+                # "ha-xxxx.hle.world", for custom zones "ha.pr.t00t.us".
+                # _make_status detects which case by checking for dots.
+                if url_part:
                     tunnels = _load_all()
                     if cfg_id in tunnels:
-                        tunnels[cfg_id].subdomain = subdomain
+                        tunnels[cfg_id].subdomain = url_part
                         _save_all(tunnels)
             except (IndexError, ValueError):
                 pass
@@ -166,8 +169,14 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
                     if subdomain:
                         tunnels = _load_all()
                         if cfg_id in tunnels:
-                            tunnels[cfg_id].subdomain = subdomain
-                            _save_all(tunnels)
+                            existing = tunnels[cfg_id].subdomain
+                            # Don't overwrite a full-domain subdomain (e.g.,
+                            # "ha.pr.t00t.us" from log parse) with a bare
+                            # relay label ("ha") — the relay only knows the
+                            # label, not the zone domain.
+                            if not existing or subdomain != label:
+                                tunnels[cfg_id].subdomain = subdomain
+                                _save_all(tunnels)
                         _connected.add(cfg_id)
                         return True
         except Exception:
@@ -446,7 +455,15 @@ def _make_status(tunnel_id: str, cfg: TunnelConfig) -> TunnelStatus:
         state = "CONNECTING"
         error = _last_errors.get(tunnel_id)
 
-    public_url = f"https://{cfg.subdomain}.hle.world" if cfg.subdomain else None
+    # If subdomain contains a dot it's already a full hostname (e.g.,
+    # "ha-xxxx.hle.world" or "ha.pr.t00t.us" for custom zones).
+    if cfg.subdomain:
+        if "." in cfg.subdomain:
+            public_url = f"https://{cfg.subdomain}"
+        else:
+            public_url = f"https://{cfg.subdomain}.hle.world"
+    else:
+        public_url = None
     return TunnelStatus(
         **cfg.model_dump(),
         state=state,
