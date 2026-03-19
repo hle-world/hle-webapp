@@ -16,9 +16,8 @@ from backend.models import (
     UpdateTunnelRequest,
 )
 
-_DATA_DIR = Path(os.environ.get("HLE_DATA_DIR", "/var/lib/hle"))
-LOG_DIR = _DATA_DIR / "logs"
-DATA_FILE = _DATA_DIR / "tunnels.json"
+LOG_DIR = Path("/data/logs")
+DATA_FILE = Path("/data/tunnels.json")
 
 _processes: dict[str, asyncio.subprocess.Process] = {}
 
@@ -119,6 +118,18 @@ def _parse_status_line(cfg_id: str, line: str) -> None:
     if "Tunnel registered:" in line:
         _connected.add(cfg_id)
         _last_errors.pop(cfg_id, None)
+        # Extract subdomain from url= field (e.g. "url=https://ha-xxxx.hle.world")
+        if "url=https://" in line:
+            try:
+                url_part = line.split("url=https://", 1)[1].split()[0]
+                subdomain = url_part.split(".hle.world")[0]
+                if subdomain:
+                    tunnels = _load_all()
+                    if cfg_id in tunnels:
+                        tunnels[cfg_id].subdomain = subdomain
+                        _save_all(tunnels)
+            except (IndexError, ValueError):
+                pass
     elif "Connection lost:" in line:
         _connected.discard(cfg_id)
         _last_errors[cfg_id] = line
@@ -312,7 +323,7 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
     if label_or_url_changed:
         cfg.subdomain = None
         # Clear cached favicon when service URL changes
-        favicon_path = _DATA_DIR / "favicons" / tunnel_id
+        favicon_path = Path("/data/favicons") / tunnel_id
         favicon_path.unlink(missing_ok=True)
 
     tunnels[tunnel_id] = cfg
@@ -353,7 +364,7 @@ async def remove_tunnel(tunnel_id: str) -> None:
     tunnels.pop(tunnel_id, None)
     _save_all(tunnels)
     # Clean up cached favicon
-    favicon_path = _DATA_DIR / "favicons" / tunnel_id
+    favicon_path = Path("/data/favicons") / tunnel_id
     favicon_path.unlink(missing_ok=True)
 
 
