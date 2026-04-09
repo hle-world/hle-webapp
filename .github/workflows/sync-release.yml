@@ -18,7 +18,9 @@ jobs:
         env:
           CLIENT_VERSION: ${{ github.event.client_payload.version }}
         run: |
-          sed -i "s/hle-client==[0-9.]*/hle-client==${CLIENT_VERSION}/" requirements.txt
+          # Strip v prefix if present (dispatch payload uses tag name e.g. v2604.1)
+          CLEAN_VERSION="${CLIENT_VERSION#v}"
+          sed -i "s/hle-client==[0-9v.]*/hle-client==${CLEAN_VERSION}/" requirements.txt
 
       - name: Create PR
         env:
