@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag (e.g. v1.16.0)"
+        description: "Version tag (e.g. v2604.1.0)"
         required: true
 
 permissions:
@@ -22,12 +22,6 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
       - name: Determine version
         id: version
         env:
@@ -36,35 +30,81 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "$EVENT_NAME" = "release" ]; then
-            echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            TAG="${RELEASE_TAG}"
           else
-            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            TAG="${INPUT_VERSION}"
           fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Package tarball
+      - name: Build frontend (default/docker)
+        working-directory: frontend
         run: |
-          VERSION="${{ steps.version.outputs.tag }}"
-          DIRNAME="hle-webapp-${VERSION#v}"
+          npm ci
+          npm run build
+
+      - name: Package webapp tarball
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          DIRNAME="hle-webapp-${VERSION}"
           mkdir -p "${DIRNAME}/backend/static"
           cp -r backend/*.py backend/__init__.py "${DIRNAME}/backend/"
           cp -r frontend/dist/* "${DIRNAME}/backend/static/"
           cp run.sh "${DIRNAME}/"
           cp requirements.txt "${DIRNAME}/"
           chmod +x "${DIRNAME}/run.sh"
-          tar czf "hle-webapp-${VERSION#v}.tar.gz" "${DIRNAME}"
+          tar czf "hle-webapp-${VERSION}.tar.gz" "${DIRNAME}"
 
-      - name: Upload release asset
+      - name: Package frontend tarballs for distribution repos
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Docker frontend — same as default build (no feature flags yet)
+          tar czf "hle-frontend-docker-${VERSION}.tar.gz" -C frontend/dist .
+
+          # HA addon frontend — same build for now (VITE_APP_MODE not yet implemented)
+          tar czf "hle-frontend-ha-addon-${VERSION}.tar.gz" -C frontend/dist .
+
+      - name: Upload release assets
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${RELEASE_TAG}"
-          gh release upload "${VERSION}" "hle-webapp-${VERSION#v}.tar.gz" --clobber
+          gh release upload "${TAG}" \
+            "hle-webapp-${VERSION}.tar.gz" \
+            "hle-frontend-docker-${VERSION}.tar.gz" \
+            "hle-frontend-ha-addon-${VERSION}.tar.gz" \
+            --clobber
 
       - name: Upload artifact (manual builds)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: hle-webapp-${{ steps.version.outputs.tag }}
-          path: "hle-webapp-*.tar.gz"
+          path: |
+            hle-webapp-*.tar.gz
+            hle-frontend-*.tar.gz
+
+      - name: Dispatch to ha-addon
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh api repos/hle-world/ha-addon/dispatches \
+            -f event_type=webapp-release \
+            -f "client_payload[version]=${VERSION}"
+
+      - name: Dispatch to hle-docker
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh api repos/hle-world/hle-docker/dispatches \
+            -f event_type=webapp-release \
+            -f "client_payload[version]=${VERSION}"
