@@ -27,6 +27,8 @@ jobs:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
         run: |
           CLIENT_VER=$(grep 'hle-client==' requirements.txt | sed 's/hle-client==//' | tr -d '[:space:]')
+          # Strip v prefix if present (safety net)
+          CLIENT_VER="${CLIENT_VER#v}"
           MAJOR_MINOR=$(echo "$CLIENT_VER" | cut -d. -f1-2)
           # Find the highest existing patch for this major.minor and bump by 1
           LATEST=$(gh release list --limit 100 --json tagName -q ".[].tagName" \
