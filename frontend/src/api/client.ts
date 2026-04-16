@@ -11,6 +11,9 @@ export interface TunnelStatus {
   forward_host: boolean
   response_timeout: number | null
   subdomain: string | null
+  zone_domain: string | null
+  server_tunnel_id: string | null
+  tier: string | null
   state: 'CONNECTED' | 'CONNECTING' | 'STOPPED' | 'FAILED'
   error: string | null
   public_url: string | null
