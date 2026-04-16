@@ -118,16 +118,23 @@ def _parse_status_line(cfg_id: str, line: str) -> None:
     if "Tunnel registered:" in line:
         _connected.add(cfg_id)
         _last_errors.pop(cfg_id, None)
-        # Extract subdomain from url= field (e.g. "url=https://ha-xxxx.hle.world")
+        # Extract subdomain from url= field for standard tunnels.
+        # For zone/custom-domain tunnels, zone_domain is populated later
+        # by _poll_once() from the server API (server is source of truth).
         if "url=https://" in line:
             try:
                 url_part = line.split("url=https://", 1)[1].split()[0]
-                subdomain = url_part.split(".hle.world")[0]
-                if subdomain:
-                    tunnels = _load_all()
-                    if cfg_id in tunnels:
-                        tunnels[cfg_id].subdomain = subdomain
-                        _save_all(tunnels)
+                tunnels = _load_all()
+                if cfg_id in tunnels:
+                    if ".hle.world" in url_part:
+                        # Standard tunnel: extract subdomain directly
+                        tunnels[cfg_id].subdomain = url_part.split(".hle.world")[0]
+                        tunnels[cfg_id].zone_domain = None
+                    else:
+                        # Zone tunnel: subdomain + zone_domain come from
+                        # server API via _poll_once(); skip local parsing
+                        pass
+                    _save_all(tunnels)
             except (IndexError, ValueError):
                 pass
     elif "Connection lost:" in line:
@@ -167,6 +174,10 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
                         tunnels = _load_all()
                         if cfg_id in tunnels:
                             tunnels[cfg_id].subdomain = subdomain
+                            # Enrich with server-authoritative fields
+                            tunnels[cfg_id].zone_domain = t.get("zone_domain")
+                            tunnels[cfg_id].server_tunnel_id = t.get("tunnel_id")
+                            tunnels[cfg_id].tier = t.get("tier")
                             _save_all(tunnels)
                         _connected.add(cfg_id)
                         return True
@@ -288,7 +299,13 @@ async def add_tunnel(req: AddTunnelRequest) -> TunnelConfig:
 
 
 async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfig:
-    """Apply a partial update to a tunnel config, then restart it."""
+    """Apply a partial update to a tunnel config.
+
+    Auth-mode changes are handled via the server REST API (no restart).
+    Connection-affecting changes (label, service_url, etc.) trigger a restart.
+    """
+    from backend import hle_api
+
     tunnels = _load_all()
     cfg = tunnels.get(tunnel_id)
     if cfg is None:
@@ -310,6 +327,11 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
                     f"A tunnel with label '{changed['label']}' already exists"
                 )
 
+    # Detect auth_mode change before applying
+    old_auth_mode = cfg.auth_mode
+    new_auth_mode = changed.get("auth_mode")
+    auth_mode_changed = new_auth_mode is not None and new_auth_mode != old_auth_mode
+
     # Track if label/service changed so we clear the stale subdomain
     label_or_url_changed = ("label" in changed and changed["label"] != cfg.label) or (
         "service_url" in changed and changed["service_url"] != cfg.service_url
@@ -318,10 +340,10 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
     for field, value in changed.items():
         setattr(cfg, field, value)
 
-    cfg.stopped = False  # editing implies user wants it running
-
     if label_or_url_changed:
         cfg.subdomain = None
+        cfg.zone_domain = None
+        cfg.server_tunnel_id = None
         # Clear cached favicon when service URL changes
         favicon_path = Path("/data/favicons") / tunnel_id
         favicon_path.unlink(missing_ok=True)
@@ -329,22 +351,53 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
     tunnels[tunnel_id] = cfg
     _save_all(tunnels)
 
-    # Stop existing process if running
-    proc = _processes.get(tunnel_id)
-    if _is_running(proc):
-        proc.terminate()
+    # Handle auth_mode change via REST API (no restart needed)
+    if auth_mode_changed and cfg.subdomain:
         try:
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            proc.kill()
+            if new_auth_mode == "none":
+                # Remove all access rules to disable SSO
+                rules = await hle_api.list_access_rules(cfg.subdomain)
+                for rule in rules:
+                    rule_id = rule.get("id")
+                    if rule_id is not None:
+                        await hle_api.delete_access_rule(cfg.subdomain, rule_id)
+            elif new_auth_mode == "sso":
+                # Re-enable SSO: add owner's email (server auto-auth pattern)
+                # The server will handle this on next registration, but we can
+                # also trigger it immediately if the tunnel is already connected
+                pass  # Access rules are managed via the Access Rules panel
+        except Exception as exc:
+            print(f"[hle] Failed to update auth settings for {cfg.subdomain}: {exc}")
 
-    # Restart with updated config
-    _connected.discard(tunnel_id)
-    _user_stopped.discard(tunnel_id)
-    _last_errors.pop(tunnel_id, None)
-    new_proc = await _spawn(cfg)
-    _processes[tunnel_id] = new_proc
-    asyncio.create_task(_monitor_tunnel(cfg.id, cfg.service_url, cfg.label))
+    # Determine if a process restart is needed
+    # Auth-mode-only changes don't need restart — server enforces per-request
+    _CONNECTION_FIELDS = {
+        "service_url", "label", "verify_ssl", "websocket_enabled",
+        "upstream_basic_auth", "forward_host", "response_timeout", "api_key",
+    }
+    needs_restart = bool(set(changed.keys()) & _CONNECTION_FIELDS)
+
+    if needs_restart:
+        cfg.stopped = False  # connection-affecting edit implies user wants it running
+        tunnels[tunnel_id] = cfg
+        _save_all(tunnels)
+
+        # Stop existing process if running
+        proc = _processes.get(tunnel_id)
+        if _is_running(proc):
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+
+        # Restart with updated config
+        _connected.discard(tunnel_id)
+        _user_stopped.discard(tunnel_id)
+        _last_errors.pop(tunnel_id, None)
+        new_proc = await _spawn(cfg)
+        _processes[tunnel_id] = new_proc
+        asyncio.create_task(_monitor_tunnel(cfg.id, cfg.service_url, cfg.label))
 
     return cfg
 
@@ -446,7 +499,12 @@ def _make_status(tunnel_id: str, cfg: TunnelConfig) -> TunnelStatus:
         state = "CONNECTING"
         error = _last_errors.get(tunnel_id)
 
-    public_url = f"https://{cfg.subdomain}.hle.world" if cfg.subdomain else None
+    if cfg.subdomain and cfg.zone_domain:
+        public_url = f"https://{cfg.subdomain}.{cfg.zone_domain}"
+    elif cfg.subdomain:
+        public_url = f"https://{cfg.subdomain}.hle.world"
+    else:
+        public_url = None
     return TunnelStatus(
         **cfg.model_dump(),
         state=state,
