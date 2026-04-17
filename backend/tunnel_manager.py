@@ -57,24 +57,28 @@ def _save_all(tunnels: dict[str, TunnelConfig]) -> None:
 
 async def _spawn(cfg: TunnelConfig) -> asyncio.subprocess.Process:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "hle",
-        "expose",
-        "--service",
-        cfg.service_url,
-        "--label",
-        cfg.label,
-        "--auth",
-        cfg.auth_mode,
-    ]
-    if cfg.verify_ssl:
-        cmd.append("--verify-ssl")
-    if not cfg.websocket_enabled:
-        cmd.append("--no-websocket")
-    if cfg.upstream_basic_auth:
-        cmd.extend(["--upstream-basic-auth", cfg.upstream_basic_auth])
-    if cfg.forward_host:
-        cmd.append("--forward-host")
+    if cfg.webhook_path:
+        cmd = [
+            "hle", "webhook",
+            "--path", cfg.webhook_path,
+            "--forward-to", cfg.service_url,
+            "--label", cfg.label,
+        ]
+    else:
+        cmd = [
+            "hle", "expose",
+            "--service", cfg.service_url,
+            "--label", cfg.label,
+            "--auth", cfg.auth_mode,
+        ]
+        if cfg.verify_ssl:
+            cmd.append("--verify-ssl")
+        if not cfg.websocket_enabled:
+            cmd.append("--no-websocket")
+        if cfg.upstream_basic_auth:
+            cmd.extend(["--upstream-basic-auth", cfg.upstream_basic_auth])
+        if cfg.forward_host:
+            cmd.append("--forward-host")
     if cfg.response_timeout is not None:
         cmd.extend(["--timeout", str(cfg.response_timeout)])
     env = {**os.environ}
@@ -278,17 +282,20 @@ async def add_tunnel(req: AddTunnelRequest) -> TunnelConfig:
             raise DuplicateLabelError(
                 f"A tunnel with label '{req.label}' already exists"
             )
+    is_webhook = bool(req.webhook_path)
     cfg = TunnelConfig(
         id=uuid.uuid4().hex[:8],
         service_url=req.service_url,
         label=req.label,
         name=req.name,
-        auth_mode=req.auth_mode,
-        verify_ssl=req.verify_ssl,
-        websocket_enabled=req.websocket_enabled,
+        auth_mode="none" if is_webhook else req.auth_mode,
+        verify_ssl=False if is_webhook else req.verify_ssl,
+        websocket_enabled=False if is_webhook else req.websocket_enabled,
         api_key=req.api_key or None,
-        upstream_basic_auth=req.upstream_basic_auth or None,
-        forward_host=req.forward_host,
+        upstream_basic_auth=None if is_webhook else (req.upstream_basic_auth or None),
+        forward_host=False if is_webhook else req.forward_host,
+        response_timeout=req.response_timeout,
+        webhook_path=req.webhook_path,
     )
     proc = await _spawn(cfg)
     _processes[cfg.id] = proc
@@ -374,6 +381,7 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
     _CONNECTION_FIELDS = {
         "service_url", "label", "verify_ssl", "websocket_enabled",
         "upstream_basic_auth", "forward_host", "response_timeout", "api_key",
+        "webhook_path",
     }
     needs_restart = bool(set(changed.keys()) & _CONNECTION_FIELDS)
 
@@ -505,6 +513,8 @@ def _make_status(tunnel_id: str, cfg: TunnelConfig) -> TunnelStatus:
         public_url = f"https://{cfg.subdomain}.hle.world"
     else:
         public_url = None
+    if public_url and cfg.webhook_path:
+        public_url = f"{public_url}{cfg.webhook_path}"
     return TunnelStatus(
         **cfg.model_dump(),
         state=state,
