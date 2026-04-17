@@ -86,3 +86,16 @@ async def create_share_link(
 
 async def delete_share_link(subdomain: str, link_id: int) -> dict:
     return await _client().delete_share_link(subdomain, link_id)
+
+
+# ---------------------------------------------------------------------------
+# Auth mode
+# ---------------------------------------------------------------------------
+
+
+async def get_auth_mode(subdomain: str) -> dict:
+    return await _client().get_tunnel_auth_mode(subdomain)
+
+
+async def set_auth_mode(subdomain: str, auth_mode: str) -> dict:
+    return await _client().set_tunnel_auth_mode(subdomain, auth_mode)
