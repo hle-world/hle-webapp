@@ -79,6 +79,8 @@ async def _spawn(cfg: TunnelConfig) -> asyncio.subprocess.Process:
             cmd.extend(["--upstream-basic-auth", cfg.upstream_basic_auth])
         if cfg.forward_host:
             cmd.append("--forward-host")
+    if cfg.zone_domain:
+        cmd.extend(["--zone", cfg.zone_domain])
     if cfg.response_timeout is not None:
         cmd.extend(["--timeout", str(cfg.response_timeout)])
     env = {**os.environ}
@@ -208,6 +210,7 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
                 break
 
     # Phase 3: health monitoring — verify tunnel stays on relay
+    # Also refresh server-authoritative fields (zone_domain, tier, etc.)
     while True:
         await asyncio.sleep(30)
         proc = _processes.get(cfg_id)
@@ -216,12 +219,29 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
             return
         try:
             live = await hle_api.list_live_tunnels()
-            found = any(
-                t.get("service_url") == service_url or t.get("service_label") == label
-                for t in live
-            )
-            if found:
+            matched = None
+            for t in live:
+                t_label = t.get("service_label") or ""
+                if t_label == label or t.get("service_url") == service_url:
+                    matched = t
+                    break
+            if matched:
                 _connected.add(cfg_id)
+                # Refresh server-authoritative fields
+                tunnels = _load_all()
+                if cfg_id in tunnels:
+                    changed = False
+                    for field in ("zone_domain", "server_tunnel_id", "tier", "auth_mode"):
+                        val = matched.get(field)
+                        if val is not None and getattr(tunnels[cfg_id], field) != val:
+                            setattr(tunnels[cfg_id], field, val)
+                            changed = True
+                    new_sub = matched.get("subdomain")
+                    if new_sub and tunnels[cfg_id].subdomain != new_sub:
+                        tunnels[cfg_id].subdomain = new_sub
+                        changed = True
+                    if changed:
+                        _save_all(tunnels)
             else:
                 _connected.discard(cfg_id)
         except Exception:
@@ -358,30 +378,22 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
     tunnels[tunnel_id] = cfg
     _save_all(tunnels)
 
-    # Handle auth_mode change via REST API (no restart needed)
-    if auth_mode_changed and cfg.subdomain:
+    # Handle auth_mode change via REST API (no restart needed).
+    # The relay stores auth_mode per tunnel and enforces it at the gate layer —
+    # rules/PIN/Basic-Auth are preserved so re-enabling SSO restores the previous
+    # allow-list without having to recreate it.
+    if auth_mode_changed and cfg.subdomain and new_auth_mode is not None:
         try:
-            if new_auth_mode == "none":
-                # Remove all access rules to disable SSO
-                rules = await hle_api.list_access_rules(cfg.subdomain)
-                for rule in rules:
-                    rule_id = rule.get("id")
-                    if rule_id is not None:
-                        await hle_api.delete_access_rule(cfg.subdomain, rule_id)
-            elif new_auth_mode == "sso":
-                # Re-enable SSO: add owner's email (server auto-auth pattern)
-                # The server will handle this on next registration, but we can
-                # also trigger it immediately if the tunnel is already connected
-                pass  # Access rules are managed via the Access Rules panel
+            await hle_api.set_auth_mode(cfg.subdomain, new_auth_mode)
         except Exception as exc:
-            print(f"[hle] Failed to update auth settings for {cfg.subdomain}: {exc}")
+            print(f"[hle] Failed to update auth_mode for {cfg.subdomain}: {exc}")
 
     # Determine if a process restart is needed
     # Auth-mode-only changes don't need restart — server enforces per-request
     _CONNECTION_FIELDS = {
         "service_url", "label", "verify_ssl", "websocket_enabled",
         "upstream_basic_auth", "forward_host", "response_timeout", "api_key",
-        "webhook_path",
+        "webhook_path", "zone_domain",
     }
     needs_restart = bool(set(changed.keys()) & _CONNECTION_FIELDS)
 
