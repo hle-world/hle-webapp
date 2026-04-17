@@ -25,11 +25,22 @@ const btn = (primary: boolean): React.CSSProperties => ({
   background: primary ? 'var(--mint)' : 'var(--surface)', color: primary ? 'var(--bg)' : 'var(--text-dim)',
   fontSize: 14, fontWeight: 500, fontFamily: 'inherit',
 })
+const typeBtn = (active: boolean): React.CSSProperties => ({
+  flex: 1, padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
+  background: active ? 'var(--mint)' : 'var(--surface)',
+  color: active ? 'var(--bg)' : 'var(--text-dim)',
+  fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+  transition: 'background 0.15s, color 0.15s',
+})
+
+type TunnelType = 'expose' | 'webhook'
 
 export function AddTunnelModal({ onClose, onAdded }: Props) {
+  const [tunnelType, setTunnelType] = useState<TunnelType>('expose')
   const [serviceUrl, setServiceUrl] = useState('')
   const [label, setLabel] = useState('')
   const [name, setName] = useState('')
+  const [webhookPath, setWebhookPath] = useState('/webhook/')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [verifySsl, setVerifySsl] = useState(false)
   const [websocket, setWebsocket] = useState(true)
@@ -40,22 +51,41 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const isWebhook = tunnelType === 'webhook'
+
+  const canSubmit = isWebhook
+    ? !!serviceUrl && !!label && !!webhookPath
+    : !!serviceUrl && !!label
+
   async function submit() {
     setLoading(true)
     setError('')
     try {
-      await addTunnel({
-        service_url: serviceUrl,
-        label,
-        name: name || undefined,
-        auth_mode: 'sso',
-        verify_ssl: verifySsl,
-        websocket_enabled: websocket,
-        api_key: apiKeyOverride || undefined,
-        upstream_basic_auth: upstreamBasicAuth || undefined,
-        forward_host: forwardHost || undefined,
-        response_timeout: responseTimeout ? parseInt(responseTimeout, 10) : undefined,
-      })
+      if (isWebhook) {
+        await addTunnel({
+          service_url: serviceUrl,
+          label,
+          name: name || undefined,
+          auth_mode: 'none',
+          websocket_enabled: false,
+          webhook_path: webhookPath,
+          api_key: apiKeyOverride || undefined,
+          response_timeout: responseTimeout ? parseInt(responseTimeout, 10) : undefined,
+        })
+      } else {
+        await addTunnel({
+          service_url: serviceUrl,
+          label,
+          name: name || undefined,
+          auth_mode: 'sso',
+          verify_ssl: verifySsl,
+          websocket_enabled: websocket,
+          api_key: apiKeyOverride || undefined,
+          upstream_basic_auth: upstreamBasicAuth || undefined,
+          forward_host: forwardHost || undefined,
+          response_timeout: responseTimeout ? parseInt(responseTimeout, 10) : undefined,
+        })
+      }
       onAdded()
     } catch (e) {
       setError(String(e))
@@ -69,25 +99,56 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
       <div style={modal}>
         <h2 style={{ fontSize: 17, fontWeight: 700, fontFamily: 'var(--font-display)' }}>Add Tunnel</h2>
 
+        {/* Tunnel type toggle */}
+        <div style={{ display: 'flex', gap: 6, background: 'var(--surface)', borderRadius: 8, padding: 3 }}>
+          <button style={typeBtn(!isWebhook)} onClick={() => setTunnelType('expose')}>
+            Expose Service
+          </button>
+          <button style={typeBtn(isWebhook)} onClick={() => setTunnelType('webhook')}>
+            Webhook
+          </button>
+        </div>
+
+        {isWebhook && (
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Webhook Path</label>
+            <input style={inputStyle} value={webhookPath}
+              onChange={e => setWebhookPath(e.target.value)}
+              placeholder="/webhook/github" />
+            <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
+              Only requests matching this path prefix will be forwarded.
+            </span>
+          </div>
+        )}
+
         <div style={fieldStyle}>
-          <label style={labelStyle}>Service URL</label>
+          <label style={labelStyle}>{isWebhook ? 'Forward To' : 'Service URL'}</label>
           <input style={inputStyle} value={serviceUrl} onChange={e => setServiceUrl(e.target.value)}
-            placeholder="http://192.168.1.50:8096" />
+            placeholder={isWebhook ? 'http://localhost:3000/webhook' : 'http://192.168.1.50:8096'} />
+          {isWebhook && (
+            <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
+              Local URL where webhook payloads will be forwarded.
+            </span>
+          )}
         </div>
 
         <div style={fieldStyle}>
           <label style={labelStyle}>Name <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(display only, optional)</span></label>
           <input style={inputStyle} value={name} onChange={e => setName(e.target.value)}
-            placeholder="e.g. Proxmox, Jellyfin, Home Assistant" />
+            placeholder={isWebhook ? 'e.g. GitHub Webhooks, Stripe Events' : 'e.g. Proxmox, Jellyfin, Home Assistant'} />
         </div>
 
         <div style={fieldStyle}>
           <label style={labelStyle}>Label <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(used in subdomain)</span></label>
           <input style={inputStyle} value={label}
             onChange={e => setLabel(e.target.value.toLowerCase().replace(/[_ .]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-'))}
-            placeholder="jellyfin" />
+            placeholder={isWebhook ? 'github-hook' : 'jellyfin'} />
           <span style={{ fontSize: 12, color: 'var(--text-xdim)' }}>
-            Subdomain: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world</code>
+            {isWebhook ? (
+              <>Webhook URL: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world{webhookPath}</code></>
+            ) : (
+              <>Subdomain: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world</code></>
+            )}
           </span>
           <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
             Lowercase letters, numbers, and hyphens only. Your unique code is appended automatically.
@@ -104,32 +165,45 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
 
         {showAdvanced && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 12, borderLeft: '2px solid var(--border)' }}>
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
-              <input type="checkbox" checked={verifySsl} onChange={e => setVerifySsl(e.target.checked)} />
-              <span>Verify SSL certificate</span>
-              <span
-                title="By default, SSL verification is disabled so self-signed certificates (common on Proxmox, Unraid, TrueNAS, etc.) work without extra setup. Enable this only if your service has a valid certificate from a trusted CA."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
-              >?</span>
-            </label>
+            {!isWebhook && (
+              <>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
+                  <input type="checkbox" checked={verifySsl} onChange={e => setVerifySsl(e.target.checked)} />
+                  <span>Verify SSL certificate</span>
+                  <span
+                    title="By default, SSL verification is disabled so self-signed certificates (common on Proxmox, Unraid, TrueNAS, etc.) work without extra setup. Enable this only if your service has a valid certificate from a trusted CA."
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
+                  >?</span>
+                </label>
 
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
-              <input type="checkbox" checked={websocket} onChange={e => setWebsocket(e.target.checked)} />
-              <span>Enable WebSocket support</span>
-              <span
-                title="Required for services that use WebSockets (Home Assistant, VS Code Server, etc.). Disable only if the service does not support them and you're seeing connection issues."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
-              >?</span>
-            </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
+                  <input type="checkbox" checked={websocket} onChange={e => setWebsocket(e.target.checked)} />
+                  <span>Enable WebSocket support</span>
+                  <span
+                    title="Required for services that use WebSockets (Home Assistant, VS Code Server, etc.). Disable only if the service does not support them and you're seeing connection issues."
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
+                  >?</span>
+                </label>
 
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
-              <input type="checkbox" checked={forwardHost} onChange={e => setForwardHost(e.target.checked)} />
-              <span>Forward Host header</span>
-              <span
-                title="Forward the browser's Host header to the local service. Enable for services like Home Assistant that validate the Host header against their external_url. By default, the Host header is set from the target URL to avoid 502 errors behind reverse proxies."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
-              >?</span>
-            </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 14 }}>
+                  <input type="checkbox" checked={forwardHost} onChange={e => setForwardHost(e.target.checked)} />
+                  <span>Forward Host header</span>
+                  <span
+                    title="Forward the browser's Host header to the local service. Enable for services like Home Assistant that validate the Host header against their external_url. By default, the Host header is set from the target URL to avoid 502 errors behind reverse proxies."
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, cursor: 'help', userSelect: 'none' }}
+                  >?</span>
+                </label>
+
+                <div style={fieldStyle}>
+                  <label style={{ ...labelStyle, fontSize: 12 }}>
+                    Upstream basic auth <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(optional — user:pass injected into forwarded requests)</span>
+                  </label>
+                  <input style={{ ...inputStyle, fontSize: 13 }} value={upstreamBasicAuth}
+                    onChange={e => setUpstreamBasicAuth(e.target.value)}
+                    placeholder="username:password" type="password" />
+                </div>
+              </>
+            )}
 
             <div style={fieldStyle}>
               <label style={{ ...labelStyle, fontSize: 12 }}>
@@ -142,34 +216,33 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
 
             <div style={fieldStyle}>
               <label style={{ ...labelStyle, fontSize: 12 }}>
-                Upstream basic auth <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(optional — user:pass injected into forwarded requests)</span>
-              </label>
-              <input style={{ ...inputStyle, fontSize: 13 }} value={upstreamBasicAuth}
-                onChange={e => setUpstreamBasicAuth(e.target.value)}
-                placeholder="username:password" type="password" />
-            </div>
-
-            <div style={fieldStyle}>
-              <label style={{ ...labelStyle, fontSize: 12 }}>
                 Response timeout{' '}
-                <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(seconds — default: 30, max: 1200)</span>
+                <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(seconds — default: {isWebhook ? '120' : '30'}, max: 1200)</span>
               </label>
               <input style={{ ...inputStyle, fontSize: 13 }} value={responseTimeout}
                 onChange={e => setResponseTimeout(e.target.value.replace(/\D/g, ''))}
-                placeholder="30" type="text" inputMode="numeric" />
+                placeholder={isWebhook ? '120' : '30'} type="text" inputMode="numeric" />
               <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
-                Increase for services that do heavy processing or trigger long pipelines.
+                {isWebhook
+                  ? 'Time to wait for your service to process the webhook payload.'
+                  : 'Increase for services that do heavy processing or trigger long pipelines.'}
               </span>
             </div>
           </div>
+        )}
+
+        {isWebhook && (
+          <p style={{ fontSize: 12, color: 'var(--text-xdim)', margin: 0, lineHeight: 1.5 }}>
+            Webhook tunnels bypass SSO authentication so external services (GitHub, Stripe, etc.) can deliver payloads. Use webhook signatures from your provider for security.
+          </p>
         )}
 
         {error && <p style={{ color: 'var(--red)', fontSize: 13 }}>{error}</p>}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button style={btn(false)} onClick={onClose}>Cancel</button>
-          <button style={btn(true)} onClick={submit} disabled={loading || !serviceUrl || !label}>
-            {loading ? 'Adding...' : 'Add Tunnel'}
+          <button style={btn(true)} onClick={submit} disabled={loading || !canSubmit}>
+            {loading ? 'Adding...' : isWebhook ? 'Add Webhook' : 'Add Tunnel'}
           </button>
         </div>
       </div>

@@ -23,6 +23,7 @@ class TunnelConfig(BaseModel):
     response_timeout: Optional[int] = None  # server-side response timeout in seconds
     subdomain: Optional[str] = None  # populated once tunnel connects to relay
     zone_domain: Optional[str] = None  # custom zone domain (e.g. "pr.t00t.us")
+    webhook_path: Optional[str] = None  # webhook path prefix (e.g. "/webhook/github")
     server_tunnel_id: Optional[str] = None  # server-assigned UUID
     tier: Optional[str] = None  # billing tier from server
     stopped: bool = False  # persisted: user explicitly stopped this tunnel
@@ -55,6 +56,7 @@ class AddTunnelRequest(_TimeoutValidator):
     upstream_basic_auth: Optional[str] = None
     forward_host: bool = False
     response_timeout: Optional[int] = None
+    webhook_path: Optional[str] = None
 
 
 class UpdateTunnelRequest(_TimeoutValidator):
@@ -68,6 +70,7 @@ class UpdateTunnelRequest(_TimeoutValidator):
     upstream_basic_auth: Optional[str] = None  # set to "" to clear
     forward_host: Optional[bool] = None
     response_timeout: Optional[int] = None
+    webhook_path: Optional[str] = None
 
 
 class UpdateConfigRequest(BaseModel):

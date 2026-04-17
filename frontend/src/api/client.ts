@@ -12,6 +12,7 @@ export interface TunnelStatus {
   response_timeout: number | null
   subdomain: string | null
   zone_domain: string | null
+  webhook_path: string | null
   server_tunnel_id: string | null
   tier: string | null
   state: 'CONNECTED' | 'CONNECTING' | 'STOPPED' | 'FAILED'
@@ -31,6 +32,7 @@ export interface UpdateTunnelRequest {
   upstream_basic_auth?: string | null
   forward_host?: boolean
   response_timeout?: number | null
+  webhook_path?: string | null
 }
 
 export interface AccessRule {
@@ -84,7 +86,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // Tunnels
 export const getTunnels = () => request<TunnelStatus[]>('/tunnels')
-export const addTunnel = (body: { service_url: string; label: string; name?: string; auth_mode: string; verify_ssl?: boolean; websocket_enabled?: boolean; api_key?: string; upstream_basic_auth?: string; forward_host?: boolean; response_timeout?: number }) =>
+export const addTunnel = (body: { service_url: string; label: string; name?: string; auth_mode: string; verify_ssl?: boolean; websocket_enabled?: boolean; api_key?: string; upstream_basic_auth?: string; forward_host?: boolean; response_timeout?: number; webhook_path?: string }) =>
   request<TunnelStatus>('/tunnels', { method: 'POST', body: JSON.stringify(body) })
 export const updateTunnel = (id: string, body: UpdateTunnelRequest) =>
   request<TunnelStatus>(`/tunnels/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
