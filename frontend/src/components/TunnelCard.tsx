@@ -126,6 +126,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
   const [editUpstreamBasicAuth, setEditUpstreamBasicAuth] = useState(tunnel.upstream_basic_auth ?? '')
   const [editForwardHost, setEditForwardHost] = useState(tunnel.forward_host)
   const [editResponseTimeout, setEditResponseTimeout] = useState(tunnel.response_timeout?.toString() ?? '')
+  const [editWebhookPath, setEditWebhookPath] = useState(tunnel.webhook_path ?? '')
   const [editSaving, setEditSaving] = useState(false)
 
   const sub = tunnel.subdomain
@@ -161,6 +162,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
       setEditUpstreamBasicAuth(tunnel.upstream_basic_auth ?? '')
       setEditForwardHost(tunnel.forward_host)
       setEditResponseTimeout(tunnel.response_timeout?.toString() ?? '')
+      setEditWebhookPath(tunnel.webhook_path ?? '')
     }
     if (p === 'pin') { setNewPin(''); setConfirmPin('') }
     if (p === 'basic-auth') { setBaUsername(''); setBaPassword(''); setBaConfirmPassword('') }
@@ -206,7 +208,14 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
     setEditSaving(true)
     setError('')
     try {
-      await updateTunnel(tunnel.id, {
+      await updateTunnel(tunnel.id, isWebhook ? {
+        service_url: editServiceUrl,
+        label: editLabel,
+        name: editName || undefined,
+        webhook_path: editWebhookPath || undefined,
+        api_key: editApiKey || null,
+        response_timeout: editResponseTimeout ? parseInt(editResponseTimeout, 10) : null,
+      } : {
         service_url: editServiceUrl,
         label: editLabel,
         name: editName || undefined,
@@ -327,6 +336,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
   }
 
   const isSso = tunnel.auth_mode === 'sso'
+  const isWebhook = !!tunnel.webhook_path
 
   // Conflict detection helpers
   const pinHasBasicAuthConflict = basicAuth?.has_basic_auth === true
@@ -370,7 +380,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               </span>
             )}
             <span style={{ color: 'var(--text-xdim)', fontWeight: 400, marginLeft: 8, fontSize: 13 }}>
-              {isSso ? '🔒 SSO' : '🌐 Open'}
+              {isWebhook ? '🔗 Webhook' : isSso ? '🔒 SSO' : '🌐 Open'}
             </span>
           </span>
           <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{tunnel.service_url}</span>
@@ -437,22 +447,22 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
         <button style={btn(panel === 'edit' ? 'active' : 'ghost')} onClick={() => togglePanel('edit')}>
           Edit
         </button>
-        {sub && isSso && (
+        {sub && isSso && !isWebhook && (
           <button style={btn(panel === 'access' ? 'active' : 'ghost')} onClick={() => togglePanel('access')}>
             Access Rules
           </button>
         )}
-        {sub && isSso && (
+        {sub && isSso && !isWebhook && (
           <button style={btn(panel === 'pin' ? 'active' : 'ghost')} onClick={() => togglePanel('pin')}>
             PIN
           </button>
         )}
-        {sub && (
+        {sub && !isWebhook && (
           <button style={btn(panel === 'basic-auth' ? 'active' : 'ghost')} onClick={() => togglePanel('basic-auth')}>
             Basic Auth
           </button>
         )}
-        {sub && (
+        {sub && !isWebhook && (
           <button style={btn(panel === 'share' ? 'active' : 'ghost')} onClick={() => togglePanel('share')}>
             Share
           </button>
@@ -471,12 +481,12 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
       {/* Edit panel */}
       {panel === 'edit' && (
         <div style={section}>
-          <span style={sectionTitle}>Edit Tunnel Settings</span>
+          <span style={sectionTitle}>Edit {isWebhook ? 'Webhook' : 'Tunnel'} Settings</span>
           <span style={{ fontSize: 12, color: 'var(--text-xdim)' }}>Saving will restart the tunnel process.</span>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Service URL</label>
+              <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>{isWebhook ? 'Forward To' : 'Service URL'}</label>
               <input style={inputSm} value={editServiceUrl} onChange={e => setEditServiceUrl(e.target.value)} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -485,15 +495,22 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Display name (optional)</label>
-              <input style={inputSm} value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. Home Assistant" />
+              <input style={inputSm} value={editName} onChange={e => setEditName(e.target.value)} placeholder={isWebhook ? 'e.g. GitHub Events' : 'e.g. Home Assistant'} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Auth mode</label>
-              <select style={inputSm} value={editAuthMode} onChange={e => setEditAuthMode(e.target.value as 'sso' | 'none')}>
-                <option value="sso">SSO (recommended)</option>
-                <option value="none">Open (no auth)</option>
-              </select>
-            </div>
+            {isWebhook ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Webhook Path</label>
+                <input style={inputSm} value={editWebhookPath} onChange={e => setEditWebhookPath(e.target.value)} placeholder="/webhook/github" />
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Auth mode</label>
+                <select style={inputSm} value={editAuthMode} onChange={e => setEditAuthMode(e.target.value as 'sso' | 'none')}>
+                  <option value="sso">SSO (recommended)</option>
+                  <option value="none">Open (no auth)</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -506,15 +523,17 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               placeholder="hle_... (optional)" type="password" />
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-              Upstream basic auth{' '}
-              <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(user:pass — injected into requests forwarded to the local service)</span>
-            </label>
-            <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editUpstreamBasicAuth}
-              onChange={e => setEditUpstreamBasicAuth(e.target.value)}
-              placeholder="username:password (optional)" type="password" />
-          </div>
+          {!isWebhook && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                Upstream basic auth{' '}
+                <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(user:pass — injected into requests forwarded to the local service)</span>
+              </label>
+              <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editUpstreamBasicAuth}
+                onChange={e => setEditUpstreamBasicAuth(e.target.value)}
+                placeholder="username:password (optional)" type="password" />
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
@@ -524,36 +543,38 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               </label>
               <input style={inputSm} value={editResponseTimeout}
                 onChange={e => setEditResponseTimeout(e.target.value.replace(/\D/g, ''))}
-                placeholder="30 (default)" type="text" inputMode="numeric" />
+                placeholder={isWebhook ? '120 (default)' : '30 (default)'} type="text" inputMode="numeric" />
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
-              <input type="checkbox" checked={editVerifySsl} onChange={e => setEditVerifySsl(e.target.checked)} />
-              Verify SSL
-              <span
-                title="Enable only if the service has a valid CA-signed certificate. Self-signed certs will fail."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
-              >?</span>
-            </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
-              <input type="checkbox" checked={editWebsocket} onChange={e => setEditWebsocket(e.target.checked)} />
-              Enable WebSocket
-              <span
-                title="Required for Home Assistant, VS Code Server, and other services that use WebSockets."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
-              >?</span>
-            </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
-              <input type="checkbox" checked={editForwardHost} onChange={e => setEditForwardHost(e.target.checked)} />
-              Forward Host header
-              <span
-                title="Forward the browser's Host header to the local service. Enable for services that validate the Host header (e.g. Home Assistant with external_url)."
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
-              >?</span>
-            </label>
-          </div>
+          {!isWebhook && (
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={editVerifySsl} onChange={e => setEditVerifySsl(e.target.checked)} />
+                Verify SSL
+                <span
+                  title="Enable only if the service has a valid CA-signed certificate. Self-signed certs will fail."
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
+                >?</span>
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={editWebsocket} onChange={e => setEditWebsocket(e.target.checked)} />
+                Enable WebSocket
+                <span
+                  title="Required for Home Assistant, VS Code Server, and other services that use WebSockets."
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
+                >?</span>
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={editForwardHost} onChange={e => setEditForwardHost(e.target.checked)} />
+                Forward Host header
+                <span
+                  title="Forward the browser's Host header to the local service. Enable for services that validate the Host header (e.g. Home Assistant with external_url)."
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', background: 'var(--surface)', color: 'var(--text-dim)', fontSize: 10, fontWeight: 700, cursor: 'help' }}
+                >?</span>
+              </label>
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btn('primary')} onClick={handleSaveEdit} disabled={editSaving || !editServiceUrl || !editLabel}>
