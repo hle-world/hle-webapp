@@ -16,6 +16,16 @@ async def list_live_tunnels() -> list[dict]:
     return await _client().list_tunnels()
 
 
+async def get_tunnel_status(subdomain: str) -> dict:
+    """Aggregated config + live state for a tunnel (single round-trip).
+
+    Replaces the multi-call fan-out previously used by ``_monitor_tunnel``.
+    Backed by ``GET /api/tunnels/{subdomain}/status`` (rate-limited 60/min
+    per (user, subdomain) on the relay side).
+    """
+    return await _client().get_tunnel_status(subdomain)
+
+
 # ---------------------------------------------------------------------------
 # Access rules
 # ---------------------------------------------------------------------------
