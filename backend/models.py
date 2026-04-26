@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
@@ -95,3 +96,16 @@ class CreateShareLinkRequest(BaseModel):
     duration: Literal["1h", "24h", "7d"] = "24h"
     label: str = ""
     max_uses: Optional[int] = None
+
+
+class Notice(BaseModel):
+    """Server-pushed informational message captured from CLI stdout.
+
+    The relay streams these over the tunnel's control WebSocket; the CLI
+    renders them with glyph prefixes (ℹ ✓ ⚠ ✗). The webapp parses those
+    glyphs back into a structured form for the UI.
+    """
+
+    level: Literal["info", "success", "warning", "error"]
+    message: str
+    ts: datetime

@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import type { TunnelStatus, AccessRule, ShareLink, BasicAuthStatus } from '../api/client'
+import type { TunnelStatus, AccessRule, ShareLink, BasicAuthStatus, TunnelNotice } from '../api/client'
 import {
   startTunnel, stopTunnel, removeTunnel, updateTunnel,
   getAccessRules, addAccessRule, deleteAccessRule,
   getPinStatus, setPin, removePin,
   getBasicAuthStatus, setBasicAuth, removeBasicAuth,
   getShareLinks, createShareLink, deleteShareLink,
-  getTunnelLogs,
+  getTunnelLogs, getTunnelNotices,
 } from '../api/client'
 import { StatusBadge } from './StatusBadge'
 
@@ -47,7 +47,7 @@ const confirmBox: React.CSSProperties = {
   padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
 }
 
-type Panel = 'access' | 'pin' | 'basic-auth' | 'share' | 'logs' | 'edit' | null
+type Panel = 'access' | 'pin' | 'basic-auth' | 'share' | 'logs' | 'notices' | 'edit' | null
 
 export function TunnelCard({ tunnel, onRefresh }: Props) {
   const [panel, setPanel] = useState<Panel>(null)
@@ -99,6 +99,23 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
     const id = setInterval(fetchLogs, 3000)
     return () => clearInterval(id)
   }, [panel, tunnel.id])
+
+  // Notices (server-pushed informational messages, parsed from CLI stdout).
+  const [notices, setNotices] = useState<TunnelNotice[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const fetchNotices = async () => {
+      try {
+        const result = await getTunnelNotices(tunnel.id)
+        if (!cancelled) setNotices(result.notices)
+      } catch { /* ignore */ }
+    }
+    fetchNotices()
+    const id = setInterval(fetchNotices, 5000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [tunnel.id])
+  const noticeCount = notices.length
+  const hasUrgent = notices.some(n => n.level === 'warning' || n.level === 'error')
 
   // Auto-scroll logs to bottom when new content arrives (only if enabled)
   useEffect(() => {
@@ -470,6 +487,15 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
         <button style={btn(panel === 'logs' ? 'active' : 'ghost')} onClick={() => togglePanel('logs')}>
           Logs
         </button>
+        {noticeCount > 0 && (
+          <button
+            style={btn(panel === 'notices' ? 'active' : (hasUrgent ? 'danger' : 'ghost'))}
+            onClick={() => togglePanel('notices')}
+            title="Server-pushed notices for this tunnel"
+          >
+            Notices ({noticeCount})
+          </button>
+        )}
         <button style={{ ...btn('danger'), marginLeft: 'auto' }}
           onClick={() => removeTunnel(tunnel.id).then(onRefresh)}>
           Remove
@@ -832,6 +858,39 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               ? 'No log output yet.'
               : (logs ?? []).join('\n')}
           </pre>
+        </div>
+      )}
+
+      {panel === 'notices' && (
+        <div style={section}>
+          <div style={sectionTitle}>Server notices</div>
+          {notices.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>No notices.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[...notices].reverse().map((n, i) => {
+                const colour =
+                  n.level === 'error' ? 'var(--red)' :
+                  n.level === 'warning' ? 'var(--yellow)' :
+                  n.level === 'success' ? 'var(--mint)' :
+                  'var(--text-dim)'
+                const glyph =
+                  n.level === 'error' ? '✗' :
+                  n.level === 'warning' ? '⚠' :
+                  n.level === 'success' ? '✓' :
+                  'ℹ'
+                return (
+                  <div key={i} style={{ display: 'flex', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
+                    <span style={{ color: colour, width: 14, flexShrink: 0 }}>{glyph}</span>
+                    <span style={{ flex: 1 }}>{n.message}</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: 11, flexShrink: 0 }}>
+                      {new Date(n.ts).toLocaleTimeString()}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
