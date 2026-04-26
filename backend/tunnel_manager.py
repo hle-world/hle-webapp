@@ -120,29 +120,18 @@ def _is_running(proc: asyncio.subprocess.Process | None) -> bool:
 
 
 def _parse_status_line(cfg_id: str, line: str) -> None:
-    """Parse a CLI log line and update tunnel state accordingly."""
+    """Parse a CLI log line and update tunnel state accordingly.
+
+    The webapp formerly extracted the tunnel subdomain from the
+    ``url=https://...`` field of the ``Tunnel registered:`` log line.
+    Subdomain (and the rest of the live state) is now fetched
+    server-authoritatively via ``GET /api/tunnels/{subdomain}/status``
+    in :func:`_monitor_tunnel`, so this routine only needs to track
+    connection-state transitions visible in the CLI log.
+    """
     if "Tunnel registered:" in line:
         _connected.add(cfg_id)
         _last_errors.pop(cfg_id, None)
-        # Extract subdomain from url= field for standard tunnels.
-        # For zone/custom-domain tunnels, zone_domain is populated later
-        # by _poll_once() from the server API (server is source of truth).
-        if "url=https://" in line:
-            try:
-                url_part = line.split("url=https://", 1)[1].split()[0]
-                tunnels = _load_all()
-                if cfg_id in tunnels:
-                    if ".hle.world" in url_part:
-                        # Standard tunnel: extract subdomain directly
-                        tunnels[cfg_id].subdomain = url_part.split(".hle.world")[0]
-                        tunnels[cfg_id].zone_domain = None
-                    else:
-                        # Zone tunnel: subdomain + zone_domain come from
-                        # server API via _poll_once(); skip local parsing
-                        pass
-                    _save_all(tunnels)
-            except (IndexError, ValueError):
-                pass
     elif "Connection lost:" in line:
         _connected.discard(cfg_id)
         _last_errors[cfg_id] = line
@@ -209,43 +198,48 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
             if await _poll_once():
                 break
 
-    # Phase 3: health monitoring — verify tunnel stays on relay
-    # Also refresh server-authoritative fields (zone_domain, tier, etc.)
+    # Phase 3: health monitoring — single /status call per cycle.
+    # Server is authoritative for is_active, auth_mode, zone, etc.
     while True:
         await asyncio.sleep(30)
         proc = _processes.get(cfg_id)
         if not _is_running(proc):
             _connected.discard(cfg_id)
             return
+
+        tunnels = _load_all()
+        cfg = tunnels.get(cfg_id)
+        if cfg is None or not cfg.subdomain:
+            # Lost the subdomain somehow — fall back to the list-tunnels
+            # path so the next loop iteration can re-discover it.
+            continue
+
         try:
-            live = await hle_api.list_live_tunnels()
-            matched = None
-            for t in live:
-                t_label = t.get("service_label") or ""
-                if t_label == label or t.get("service_url") == service_url:
-                    matched = t
-                    break
-            if matched:
-                _connected.add(cfg_id)
-                # Refresh server-authoritative fields
-                tunnels = _load_all()
-                if cfg_id in tunnels:
-                    changed = False
-                    for field in ("zone_domain", "server_tunnel_id", "tier", "auth_mode"):
-                        val = matched.get(field)
-                        if val is not None and getattr(tunnels[cfg_id], field) != val:
-                            setattr(tunnels[cfg_id], field, val)
-                            changed = True
-                    new_sub = matched.get("subdomain")
-                    if new_sub and tunnels[cfg_id].subdomain != new_sub:
-                        tunnels[cfg_id].subdomain = new_sub
-                        changed = True
-                    if changed:
-                        _save_all(tunnels)
-            else:
-                _connected.discard(cfg_id)
+            status = await hle_api.get_tunnel_status(cfg.subdomain)
         except Exception:
-            pass
+            # Transient server / network error — keep current state and retry.
+            continue
+
+        if status.get("is_active"):
+            _connected.add(cfg_id)
+        else:
+            _connected.discard(cfg_id)
+            continue
+
+        # Refresh server-authoritative fields. tier no longer flows through
+        # /status (it's account-wide, not per-tunnel) so we leave it alone.
+        changed = False
+        for field in ("zone_domain", "auth_mode"):
+            val = status.get("zone" if field == "zone_domain" else field)
+            if val is not None and getattr(cfg, field, None) != val:
+                setattr(cfg, field, val)
+                changed = True
+        new_sub = status.get("subdomain")
+        if new_sub and cfg.subdomain != new_sub:
+            cfg.subdomain = new_sub
+            changed = True
+        if changed:
+            _save_all(tunnels)
 
 
 # ---------------------------------------------------------------------------
