@@ -132,6 +132,19 @@ async def get_tunnel_logs(tunnel_id: str, lines: int = 100):
     return {"lines": all_lines[-lines:]}
 
 
+@app.get("/api/tunnels/{tunnel_id}/notices")
+async def get_tunnel_notices(tunnel_id: str):
+    """Return recent server-pushed NOTICEs captured for this tunnel.
+
+    The relay streams these over the tunnel WebSocket; the CLI prints them
+    with glyph prefixes (ℹ ✓ ⚠ ✗) which the webapp parses back into
+    structured ``Notice`` records (max 20 per tunnel, oldest → newest).
+    """
+    if tm.get_tunnel(tunnel_id) is None:
+        raise HTTPException(status_code=404, detail="Tunnel not found")
+    return {"notices": tm.get_notices(tunnel_id)}
+
+
 @app.get("/api/tunnels/{tunnel_id}/logs/download")
 async def download_tunnel_logs(tunnel_id: str, lines: int = 2000):
     """Download the last N log lines as a plain text file."""

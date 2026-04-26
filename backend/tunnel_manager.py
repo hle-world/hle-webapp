@@ -7,10 +7,13 @@ import json
 import os
 import signal
 import uuid
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.models import (
     AddTunnelRequest,
+    Notice,
     TunnelConfig,
     TunnelStatus,
     UpdateTunnelRequest,
@@ -30,6 +33,30 @@ _user_stopped: set[str] = set()
 
 # Last meaningful error/warning line per tunnel (only WARNING/ERROR level).
 _last_errors: dict[str, str] = {}
+
+# Server-pushed NOTICE messages, ring buffer per tunnel.
+_NOTICE_BUFFER_SIZE = 20
+_last_notices: dict[str, deque[Notice]] = {}
+
+# Map CLI glyph prefix → notice level. The CLI renders notices with these
+# leading characters (see hle_client/notices.py); we recover the level here
+# without coupling to a structured CLI output mode that does not yet exist.
+_NOTICE_GLYPHS: dict[str, str] = {
+    "ℹ": "info",
+    "✓": "success",
+    "⚠": "warning",
+    "✗": "error",
+}
+
+
+def _record_notice(cfg_id: str, level: str, message: str) -> None:
+    buf = _last_notices.setdefault(cfg_id, deque(maxlen=_NOTICE_BUFFER_SIZE))
+    buf.append(Notice(level=level, message=message, ts=datetime.now(timezone.utc)))
+
+
+def get_notices(cfg_id: str) -> list[Notice]:
+    """Return the recent NOTICE buffer for a tunnel (oldest → newest)."""
+    return list(_last_notices.get(cfg_id, ()))
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +153,19 @@ def _parse_status_line(cfg_id: str, line: str) -> None:
     ``url=https://...`` field of the ``Tunnel registered:`` log line.
     Subdomain (and the rest of the live state) is now fetched
     server-authoritatively via ``GET /api/tunnels/{subdomain}/status``
-    in :func:`_monitor_tunnel`, so this routine only needs to track
-    connection-state transitions visible in the CLI log.
+    in :func:`_monitor_tunnel`, so this routine only tracks
+    connection-state transitions and server-pushed NOTICE messages.
     """
+    # Server NOTICEs are rendered by the CLI with a leading glyph + space.
+    # Match them first so a notice line never falls through to the
+    # WARNING/ERROR string heuristic below.
+    glyph = line[:1]
+    if glyph in _NOTICE_GLYPHS:
+        message = line[1:].strip()
+        if message:
+            _record_notice(cfg_id, _NOTICE_GLYPHS[glyph], message)
+        return
+
     if "Tunnel registered:" in line:
         _connected.add(cfg_id)
         _last_errors.pop(cfg_id, None)

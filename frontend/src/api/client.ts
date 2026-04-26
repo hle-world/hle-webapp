@@ -96,6 +96,14 @@ export const stopTunnel = (id: string) => request<void>(`/tunnels/${id}/stop`, {
 export const getTunnelLogs = (id: string, lines = 200) =>
   request<{ lines: string[] }>(`/tunnels/${id}/logs?lines=${lines}`)
 
+export interface TunnelNotice {
+  level: 'info' | 'success' | 'warning' | 'error'
+  message: string
+  ts: string
+}
+export const getTunnelNotices = (id: string) =>
+  request<{ notices: TunnelNotice[] }>(`/tunnels/${id}/notices`)
+
 // Access rules
 export const getAccessRules = (subdomain: string) => request<AccessRule[]>(`/tunnels/${subdomain}/access`)
 export const addAccessRule = (subdomain: string, email: string, provider: string) =>
