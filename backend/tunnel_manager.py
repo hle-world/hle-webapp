@@ -204,8 +204,11 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
                         tunnels = _load_all()
                         if cfg_id in tunnels:
                             tunnels[cfg_id].subdomain = subdomain
-                            # Enrich with server-authoritative fields
-                            tunnels[cfg_id].zone_domain = t.get("zone_domain")
+                            # Enrich with server-authoritative fields. The relay
+                            # is the source of truth for public_url — never
+                            # reconstruct it client-side.
+                            tunnels[cfg_id].public_url = t.get("public_url")
+                            tunnels[cfg_id].zone_domain = t.get("zone")
                             tunnels[cfg_id].server_tunnel_id = t.get("tunnel_id")
                             tunnels[cfg_id].tier = t.get("tier")
                             _save_all(tunnels)
@@ -263,16 +266,19 @@ async def _monitor_tunnel(cfg_id: str, service_url: str, label: str) -> None:
 
         # Refresh server-authoritative fields. tier no longer flows through
         # /status (it's account-wide, not per-tunnel) so we leave it alone.
+        # public_url is the source of truth — never reconstructed locally.
         changed = False
-        for field in ("zone_domain", "auth_mode"):
-            val = status.get("zone" if field == "zone_domain" else field)
-            if val is not None and getattr(cfg, field, None) != val:
-                setattr(cfg, field, val)
+        server_to_local = {
+            "public_url": "public_url",
+            "zone": "zone_domain",
+            "auth_mode": "auth_mode",
+            "subdomain": "subdomain",
+        }
+        for server_key, local_attr in server_to_local.items():
+            val = status.get(server_key)
+            if val is not None and getattr(cfg, local_attr, None) != val:
+                setattr(cfg, local_attr, val)
                 changed = True
-        new_sub = status.get("subdomain")
-        if new_sub and cfg.subdomain != new_sub:
-            cfg.subdomain = new_sub
-            changed = True
         if changed:
             _save_all(tunnels)
 
@@ -398,6 +404,7 @@ async def update_tunnel(tunnel_id: str, req: UpdateTunnelRequest) -> TunnelConfi
 
     if label_or_url_changed:
         cfg.subdomain = None
+        cfg.public_url = None
         cfg.zone_domain = None
         cfg.server_tunnel_id = None
         # Clear cached favicon when service URL changes
@@ -548,18 +555,16 @@ def _make_status(tunnel_id: str, cfg: TunnelConfig) -> TunnelStatus:
         state = "CONNECTING"
         error = _last_errors.get(tunnel_id)
 
-    if cfg.subdomain and cfg.zone_domain:
-        public_url = f"https://{cfg.subdomain}.{cfg.zone_domain}"
-    elif cfg.subdomain:
-        public_url = f"https://{cfg.subdomain}.hle.world"
-    else:
-        public_url = None
+    # public_url is server-authoritative (set during /status sync).
+    # For webhook tunnels, the server returns the base URL — append the path.
+    public_url = cfg.public_url
     if public_url and cfg.webhook_path:
         public_url = f"{public_url}{cfg.webhook_path}"
+    payload = cfg.model_dump()
+    payload["public_url"] = public_url
     return TunnelStatus(
-        **cfg.model_dump(),
+        **payload,
         state=state,
         error=error,
-        public_url=public_url,
         pid=proc.pid if running else None,
     )
