@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { addTunnel } from '../api/client'
+import { preset } from '../preset'
 
 interface Props {
   onClose: () => void
@@ -37,8 +38,8 @@ type TunnelType = 'expose' | 'webhook'
 
 export function AddTunnelModal({ onClose, onAdded }: Props) {
   const [tunnelType, setTunnelType] = useState<TunnelType>('expose')
-  const [serviceUrl, setServiceUrl] = useState('')
-  const [label, setLabel] = useState('')
+  const [serviceUrl, setServiceUrl] = useState(preset.defaultServiceUrl)
+  const [label, setLabel] = useState(preset.defaultLabel)
   const [name, setName] = useState('')
   const [webhookPath, setWebhookPath] = useState('/webhook/')
   const [showAdvanced, setShowAdvanced] = useState(false)
