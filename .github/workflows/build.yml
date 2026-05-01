@@ -98,22 +98,36 @@ jobs:
             hle-webapp-*.tar.gz
             hle-frontend-*.tar.gz
 
+      - name: Resolve hle-client version
+        id: client_version
+        run: |
+          CV=$(grep '^hle-client==' requirements.txt | sed 's/hle-client==//' | tr -d '[:space:]')
+          if [ -z "$CV" ]; then
+            echo "::error::could not parse hle-client version from requirements.txt"
+            exit 1
+          fi
+          echo "version=$CV" >> "$GITHUB_OUTPUT"
+
       - name: Dispatch to ha-addon
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
           VERSION: ${{ steps.version.outputs.version }}
+          CLIENT_VERSION: ${{ steps.client_version.outputs.version }}
         run: |
           gh api repos/hle-world/ha-addon/dispatches \
             -f event_type=webapp-release \
-            -f "client_payload[version]=${VERSION}"
+            -f "client_payload[version]=${VERSION}" \
+            -f "client_payload[hle_client_version]=${CLIENT_VERSION}"
 
       - name: Dispatch to hle-docker
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.HLE_PAT }}
           VERSION: ${{ steps.version.outputs.version }}
+          CLIENT_VERSION: ${{ steps.client_version.outputs.version }}
         run: |
           gh api repos/hle-world/hle-docker/dispatches \
             -f event_type=webapp-release \
-            -f "client_payload[version]=${VERSION}"
+            -f "client_payload[version]=${VERSION}" \
+            -f "client_payload[hle_client_version]=${CLIENT_VERSION}"
