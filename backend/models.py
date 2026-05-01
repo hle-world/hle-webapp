@@ -23,7 +23,8 @@ class TunnelConfig(BaseModel):
     forward_host: bool = False  # forward browser's Host header to local service
     response_timeout: Optional[int] = None  # server-side response timeout in seconds
     subdomain: Optional[str] = None  # populated once tunnel connects to relay
-    zone_domain: Optional[str] = None  # custom zone domain (e.g. "pr.t00t.us")
+    public_url: Optional[str] = None  # server-authoritative public URL (no client-side construction)
+    zone_domain: Optional[str] = None  # custom zone domain — informational only, never used to build URLs
     webhook_path: Optional[str] = None  # webhook path prefix (e.g. "/webhook/github")
     server_tunnel_id: Optional[str] = None  # server-assigned UUID
     tier: Optional[str] = None  # billing tier from server
@@ -33,7 +34,6 @@ class TunnelConfig(BaseModel):
 class TunnelStatus(TunnelConfig):
     state: Literal["CONNECTED", "CONNECTING", "STOPPED", "FAILED"] = "STOPPED"
     error: Optional[str] = None  # last error line from log when state is FAILED
-    public_url: Optional[str] = None
     pid: Optional[int] = None
 
 
