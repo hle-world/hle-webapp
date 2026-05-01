@@ -38,13 +38,17 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Build frontend (default/docker)
+      - name: Install frontend deps
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
-      - name: Package webapp tarball
+      - name: Build frontend (docker variant)
+        working-directory: frontend
+        env:
+          VITE_APP_MODE: docker
+        run: npm run build
+
+      - name: Package webapp tarball + docker frontend
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -56,15 +60,20 @@ jobs:
           cp requirements.txt "${DIRNAME}/"
           chmod +x "${DIRNAME}/run.sh"
           tar czf "hle-webapp-${VERSION}.tar.gz" "${DIRNAME}"
+          tar czf "hle-frontend-docker-${VERSION}.tar.gz" -C frontend/dist .
 
-      - name: Package frontend tarballs for distribution repos
+      - name: Build frontend (ha-addon variant)
+        working-directory: frontend
+        env:
+          VITE_APP_MODE: ha-addon
+        run: |
+          rm -rf dist
+          npm run build
+
+      - name: Package ha-addon frontend
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Docker frontend — same as default build (no feature flags yet)
-          tar czf "hle-frontend-docker-${VERSION}.tar.gz" -C frontend/dist .
-
-          # HA addon frontend — same build for now (VITE_APP_MODE not yet implemented)
           tar czf "hle-frontend-ha-addon-${VERSION}.tar.gz" -C frontend/dist .
 
       - name: Upload release assets
