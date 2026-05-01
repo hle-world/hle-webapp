@@ -7,6 +7,7 @@ import {
 } from './api/client'
 import { TunnelCard } from './components/TunnelCard'
 import { AddTunnelModal } from './components/AddTunnelModal'
+import { preset } from './preset'
 
 // ---------------------------------------------------------------------------
 // Shared inline style helpers (reference CSS variables from index.css)
@@ -233,7 +234,7 @@ export default function App() {
           </span>
         </span>
         <span style={{ color: 'var(--text-dim)', fontSize: 14 }}>
-          HomeLab Everywhere
+          {preset.productTagline}
         </span>
       </header>
 
