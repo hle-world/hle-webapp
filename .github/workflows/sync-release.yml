@@ -34,7 +34,10 @@ jobs:
           git add requirements.txt
           git commit -m "chore: bump hle-client to ${CLIENT_VERSION}"
           git push -u origin "${BRANCH}"
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "chore: bump hle-client to ${CLIENT_VERSION}" \
-            --body "Automated sync from hle-client release v${CLIENT_VERSION}." \
-            --base main
+            --body "Automated sync from hle-client release v${CLIENT_VERSION}. Auto-merge enabled — will merge when CI passes." \
+            --base main)
+          echo "Opened: ${PR_URL}"
+          gh pr merge "${PR_URL}" --auto --squash || \
+            echo "::warning::Could not enable auto-merge (check repo settings)"
