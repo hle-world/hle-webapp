@@ -20,7 +20,19 @@ jobs:
           python-version: "3.12"
 
       - name: Install backend deps
-        run: pip install -r requirements.txt
+        # Retry with backoff: a fresh hle-client release may not have finished
+        # propagating to PyPI when the sync PR's CI runs. Without this the pin
+        # bump fails, auto-merge never engages, and the ha-addon cascade stalls.
+        run: |
+          for i in $(seq 1 20); do
+            if pip install -r requirements.txt; then
+              exit 0
+            fi
+            echo "pip install failed (attempt ${i}/20) — likely PyPI propagation lag; retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::pip install -r requirements.txt failed after 20 attempts"
+          exit 1
 
       - name: Syntax check
         run: python -m compileall -q backend
