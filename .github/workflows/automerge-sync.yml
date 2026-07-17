@@ -1,0 +1,38 @@
+name: Auto-merge sync PRs
+
+# Event-driven replacement for `gh pr merge --auto`, which cannot be enabled
+# here because `main` has no branch protection (the enablePullRequestAutoMerge
+# GraphQL mutation requires it). When the Test workflow finishes successfully
+# for a `chore/sync-client-*` PR, squash-merge it. Merging with HLE_PAT (not the
+# default GITHUB_TOKEN) ensures the resulting push to main still triggers the
+# Auto Release workflow.
+
+on:
+  workflow_run:
+    workflows: ["Test"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  automerge:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'chore/sync-client-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge the green sync PR
+        env:
+          GH_TOKEN: ${{ secrets.HLE_PAT }}
+          REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          PR=$(gh pr list -R "$REPO" --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$PR" ]; then
+            echo "No open PR for ${HEAD_BRANCH} — nothing to merge."
+            exit 0
+          fi
+          echo "Merging PR #${PR} (${HEAD_BRANCH})"
+          gh pr merge "$PR" -R "$REPO" --squash --delete-branch
