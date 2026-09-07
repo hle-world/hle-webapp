@@ -20,18 +20,31 @@ jobs:
           python-version: "3.12"
 
       - name: Install backend deps
-        # Retry with backoff: a fresh hle-client release may not have finished
-        # propagating to PyPI when the sync PR's CI runs. Without this the pin
-        # bump fails, auto-merge never engages, and the ha-addon cascade stalls.
+        # Retry: a fresh hle-client release may not be installable from *this*
+        # runner yet when the sync PR's CI runs. Without this the pin bump
+        # fails, auto-merge never engages, and the ha-addon cascade stalls.
+        #
+        # hle-client's publish job already blocks until the version is
+        # installable before dispatching here, and that is still not enough:
+        # it checks from a self-hosted runner while this job runs on a
+        # GitHub-hosted one, so the two ask different PyPI CDN edges. On
+        # 2026-09-07 the publish check passed at 12:51 and this job was still
+        # served an index without the version at 12:53, then spent its whole
+        # five-minute budget on the same stale edge and gave up.
+        #
+        # So: no cache, because pip holds an index page for ~10 minutes and a
+        # stale one here means every retry re-reads the same answer; and a
+        # budget long enough to outlast an edge that has not caught up, rather
+        # than one tuned to how long an upload takes.
         run: |
-          for i in $(seq 1 20); do
-            if pip install -r requirements.txt; then
+          for i in $(seq 1 40); do
+            if pip install --no-cache-dir -r requirements.txt; then
               exit 0
             fi
-            echo "pip install failed (attempt ${i}/20) — likely PyPI propagation lag; retrying in 15s..."
-            sleep 15
+            echo "pip install failed (attempt ${i}/40) — likely PyPI propagation lag; retrying in 30s..."
+            sleep 30
           done
-          echo "::error::pip install -r requirements.txt failed after 20 attempts"
+          echo "::error::pip install -r requirements.txt failed after 40 attempts (~20 minutes)"
           exit 1
 
       - name: Syntax check

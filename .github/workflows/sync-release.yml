@@ -20,6 +20,20 @@ jobs:
         run: |
           # Strip v prefix if present (dispatch payload uses tag name e.g. v2604.1)
           CLEAN_VERSION="${CLIENT_VERSION#v}"
+
+          # Every field of a repository_dispatch payload is attacker-chosen for
+          # anyone able to send one, and this value goes on to be a sed
+          # replacement, a branch name, a commit message and a PR title. It is
+          # only ever a CalVer tag, so say so: anything else stops here rather
+          # than reaching one of those.
+          case "${CLEAN_VERSION}" in
+            [0-9][0-9][0-9][0-9].[0-9]|[0-9][0-9][0-9][0-9].[0-9][0-9]) ;;
+            *)
+              echo "::error::Refusing dispatch: version '${CLIENT_VERSION}' is not CalVer YYMM.RELEASE"
+              exit 1
+              ;;
+          esac
+
           sed -i "s/hle-client==[0-9v.]*/hle-client==${CLEAN_VERSION}/" requirements.txt
 
       - name: Create PR
