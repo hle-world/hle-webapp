@@ -50,6 +50,13 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q backend
 
+      - name: Unit tests
+        # Checks the spawned `hle` argv against the pinned hle-client's CLI,
+        # so a flag the client does not accept fails here, not at runtime.
+        run: |
+          pip install pytest
+          pytest backend/tests -q
+
       - name: Ruff (best-effort)
         run: |
           pip install ruff
