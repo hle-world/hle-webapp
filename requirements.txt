@@ -1,4 +1,4 @@
-hle-client==2609.9
+hle-client==2609.10
 fastapi
 uvicorn
 httpx
