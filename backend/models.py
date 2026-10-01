@@ -23,8 +23,12 @@ class TunnelConfig(BaseModel):
     forward_host: bool = False  # forward browser's Host header to local service
     response_timeout: Optional[int] = None  # server-side response timeout in seconds
     subdomain: Optional[str] = None  # populated once tunnel connects to relay
-    public_url: Optional[str] = None  # server-authoritative public URL (no client-side construction)
-    zone_domain: Optional[str] = None  # custom zone domain — informational only, never used to build URLs
+    public_url: Optional[str] = (
+        None  # server-authoritative public URL (no client-side construction)
+    )
+    zone_domain: Optional[str] = (
+        None  # custom zone domain — informational only, never used to build URLs
+    )
     webhook_path: Optional[str] = None  # webhook path prefix (e.g. "/webhook/github")
     server_tunnel_id: Optional[str] = None  # server-assigned UUID
     tier: Optional[str] = None  # billing tier from server
@@ -99,11 +103,11 @@ class CreateShareLinkRequest(BaseModel):
 
 
 class Notice(BaseModel):
-    """Server-pushed informational message captured from CLI stdout.
+    """Server-pushed informational message captured from the CLI's events.
 
     The relay streams these over the tunnel's control WebSocket; the CLI
-    renders them with glyph prefixes (ℹ ✓ ⚠ ✗). The webapp parses those
-    glyphs back into a structured form for the UI.
+    turns each into a ``notice`` event on stdout under ``--events jsonl``,
+    whose ``level`` and ``message`` are recorded here for the UI.
     """
 
     level: Literal["info", "success", "warning", "error"]

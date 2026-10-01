@@ -136,9 +136,9 @@ async def get_tunnel_logs(tunnel_id: str, lines: int = 100):
 async def get_tunnel_notices(tunnel_id: str):
     """Return recent server-pushed NOTICEs captured for this tunnel.
 
-    The relay streams these over the tunnel WebSocket; the CLI prints them
-    with glyph prefixes (ℹ ✓ ⚠ ✗) which the webapp parses back into
-    structured ``Notice`` records (max 20 per tunnel, oldest → newest).
+    The relay streams these over the tunnel WebSocket; the CLI reports each
+    as a ``notice`` event under ``--events jsonl``, which the webapp records
+    as structured ``Notice`` rows (max 20 per tunnel, oldest → newest).
     """
     if tm.get_tunnel(tunnel_id) is None:
         raise HTTPException(status_code=404, detail="Tunnel not found")
