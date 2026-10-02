@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import click
 import pytest
-from hle_client.cli import expose, webhook
+from hle_client.cli import tunnel_create, webhook
 
 from backend.models import TunnelConfig
 from backend.tunnel_manager import _build_argv
@@ -27,13 +27,24 @@ def _cfg(**overrides) -> TunnelConfig:
     return TunnelConfig(**base)
 
 
+def test_expose_argv_uses_tunnel_create_with_events() -> None:
+    argv = _build_argv(_cfg())
+    assert argv[:3] == ["hle", "tunnel", "create"]
+    # --events jsonl is what lets us parse stdout instead of scraping glyphs.
+    assert argv[-2:] == ["--events", "jsonl"]
+    params = _parse(tunnel_create, argv[3:])
+    assert params["first"] == "svc"
+    assert params["second"] == "http://localhost:8080"
+    assert params["events"] == "jsonl"
+
+
 def test_expose_argv_with_response_timeout_is_accepted_by_cli() -> None:
     argv = _build_argv(_cfg(response_timeout=300))
-    assert argv[:2] == ["hle", "expose"]
+    assert argv[:3] == ["hle", "tunnel", "create"]
     assert "--timeout" not in argv
-    params = _parse(expose, argv[2:])
-    assert params["service"] == "http://localhost:8080"
-    assert params["service_label"] == "svc"
+    params = _parse(tunnel_create, argv[3:])
+    assert params["second"] == "http://localhost:8080"
+    assert params["first"] == "svc"
 
 
 def test_expose_argv_all_flags_accepted_by_cli() -> None:
@@ -47,7 +58,7 @@ def test_expose_argv_all_flags_accepted_by_cli() -> None:
             auth_mode="none",
         )
     )
-    params = _parse(expose, argv[2:])
+    params = _parse(tunnel_create, argv[3:])
     assert params["verify_ssl"] is True
     assert params["websocket"] is False
     assert params["upstream_basic_auth"] == "u:p"
@@ -55,7 +66,7 @@ def test_expose_argv_all_flags_accepted_by_cli() -> None:
     assert params["auth"] == "none"
 
 
-def test_webhook_argv_with_response_timeout_is_accepted_by_cli() -> None:
+def test_webhook_argv_with_events_is_accepted_by_cli() -> None:
     argv = _build_argv(
         _cfg(
             response_timeout=120,
@@ -63,15 +74,17 @@ def test_webhook_argv_with_response_timeout_is_accepted_by_cli() -> None:
             service_url="http://localhost:9000/hook",
         )
     )
-    assert argv[:2] == ["hle", "webhook"]
+    assert argv[:3] == ["hle", "tunnel", "webhook"]
+    assert argv[-2:] == ["--events", "jsonl"]
     assert "--timeout" not in argv
-    params = _parse(webhook, argv[2:])
+    params = _parse(webhook, argv[3:])
     assert params["path"] == "/webhook/github"
     assert params["forward_to"] == "http://localhost:9000/hook"
+    assert params["events"] == "jsonl"
 
 
 def test_unknown_option_is_rejected_by_cli() -> None:
     """Guard that the check above is meaningful: click really rejects bad flags."""
     argv = _build_argv(_cfg()) + ["--timeout", "300"]
     with pytest.raises(click.NoSuchOption):
-        _parse(expose, argv[2:])
+        _parse(tunnel_create, argv[3:])
