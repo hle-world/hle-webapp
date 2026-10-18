@@ -26,4 +26,6 @@ export HLE_DATA_DIR="${DATA_DIR}"
 mkdir -p "${DATA_DIR}/logs"
 
 echo "[hle] Starting HLE on ${BIND_HOST}:${PORT}..."
-exec python3 -m uvicorn backend.main:app --host "${BIND_HOST}" --port "${PORT}" --app-dir "${APP_DIR}"
+# --no-proxy-headers: the login rate limit keys on the socket peer address, so
+# a client-supplied X-Forwarded-For must not be able to change it.
+exec python3 -m uvicorn backend.main:app --host "${BIND_HOST}" --port "${PORT}" --app-dir "${APP_DIR}" --no-proxy-headers

@@ -7,12 +7,14 @@ per-tunnel secrets in tunnel responses.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import re
 import stat
 import sys
 
+import httpx
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -282,35 +284,154 @@ def test_no_bypass_without_token(main, method, path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_failed_logins_rate_limited(main, tmp_path) -> None:
-    client = TestClient(main.app, follow_redirects=False)
+ATTACKER = ("198.51.100.7", 40000)
+OWNER = ("192.0.2.20", 40000)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [10_000.0]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: now[0])
+    return now
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    """Record slowdown sleeps instead of waiting."""
+    slept: list[float] = []
+
+    async def _sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(auth.asyncio, "sleep", _sleep)
+    return slept
+
+
+def _lock_out(client: TestClient) -> None:
     for _ in range(auth.MAX_FAILURES):
         assert client.post("/login", data={"token": "guess"}).status_code == 401
-    # Even the right token is refused while the address is locked out.
-    assert client.post("/login", data={"token": _token(tmp_path)}).status_code == 429
-    resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
-    assert resp.status_code == 429
 
 
-def test_failed_bearer_attempts_rate_limited(main, tmp_path) -> None:
-    client = TestClient(main.app)
+def test_lockout_refuses_right_token_until_window_passes(main, tmp_path, clock):
+    client = TestClient(main.app, client=ATTACKER, follow_redirects=False)
+    _lock_out(client)
+    right = {"token": _token(tmp_path)}
+    assert client.post("/login", data=right).status_code == 429
+    bearer = {"Authorization": f"Bearer {_token(tmp_path)}"}
+    assert client.get("/api/tunnels", headers=bearer).status_code == 429
+
+    clock[0] += auth.FAILURE_WINDOW + 1
+    assert client.post("/login", data=right).status_code == 303
+
+
+def test_bearer_and_login_share_one_limiter(main, tmp_path) -> None:
+    client = TestClient(main.app, client=ATTACKER, follow_redirects=False)
     for _ in range(auth.MAX_FAILURES):
         resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
         assert resp.status_code == 401
-    resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
-    assert resp.status_code == 429
-    assert client.post("/login", data={"token": "guess"}).status_code == 429
+    assert (
+        client.get("/api/tunnels", headers={"Authorization": "Bearer x"}).status_code
+        == 429
+    )
+    assert client.post("/login", data={"token": _token(tmp_path)}).status_code == 429
 
 
-def test_limiter_window_expires(monkeypatch) -> None:
-    clock = [1000.0]
-    monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
-    limiter = auth.FailureLimiter(max_failures=2, window=10)
-    limiter.record("a")
-    limiter.record("a")
-    assert limiter.blocked("a") and not limiter.blocked("b")
-    clock[0] += 11
-    assert not limiter.blocked("a")
+def test_lockout_is_per_address(main, tmp_path) -> None:
+    _lock_out(TestClient(main.app, client=ATTACKER, follow_redirects=False))
+    owner = TestClient(main.app, client=OWNER, follow_redirects=False)
+    assert owner.post("/login", data={"token": _token(tmp_path)}).status_code == 303
+
+
+def test_spoofed_forwarded_for_does_not_bypass(main, tmp_path) -> None:
+    client = TestClient(main.app, client=ATTACKER, follow_redirects=False)
+    _lock_out(client)
+    for header in ("X-Forwarded-For", "X-Real-IP", "Forwarded"):
+        resp = client.post(
+            "/login",
+            data={"token": _token(tmp_path)},
+            headers={header: "203.0.113.99"},
+        )
+        assert resp.status_code == 429, header
+
+
+def test_valid_session_exempt_from_lockout(main, tmp_path) -> None:
+    client = TestClient(main.app, client=ATTACKER, follow_redirects=False)
+    assert client.post("/login", data={"token": _token(tmp_path)}).status_code == 303
+    for _ in range(auth.MAX_FAILURES + 5):
+        client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
+    # Same address, now locked out for token attempts, but the session works.
+    assert client.get("/api/tunnels").status_code == 200
+
+
+def test_distributed_flood_slows_but_never_locks_owner(main, tmp_path, no_sleep):
+    for i in range(auth.GLOBAL_SLOWDOWN_AFTER * 3):
+        flood = TestClient(main.app, client=(f"203.0.113.{i % 250}", 1000 + i))
+        assert flood.post("/login", data={"token": "guess"}).status_code in (401, 429)
+    assert no_sleep  # the global figure switched the slowdown on
+
+    owner = TestClient(main.app, client=OWNER, follow_redirects=False)
+    assert owner.post("/login", data={"token": _token(tmp_path)}).status_code == 303
+    assert owner.get("/api/tunnels").status_code == 200
+    bearer = {"Authorization": f"Bearer {_token(tmp_path)}"}
+    fresh = TestClient(main.app, client=("192.0.2.21", 1))
+    assert fresh.get("/api/tunnels", headers=bearer).status_code == 200
+
+
+def test_concurrent_guesses_cannot_race_past_limit(main, monkeypatch) -> None:
+    compares = []
+    real = auth._token_matches
+
+    def _counting(given, token):
+        compares.append(given)
+        return real(given, token)
+
+    monkeypatch.setattr(auth, "_token_matches", _counting)
+    # Force an await between reserve and compare on every attempt, so the
+    # requests genuinely interleave.
+    monkeypatch.setattr(auth, "SLOWDOWN_SECONDS", 0.01)
+    main.app.state.ui_auth_limiter.slowdown_after = 0
+
+    async def _run() -> list[int]:
+        transport = httpx.ASGITransport(app=main.app, client=ATTACKER)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resps = await asyncio.gather(
+                *(
+                    client.get(
+                        "/api/tunnels", headers={"Authorization": f"Bearer g{i}"}
+                    )
+                    for i in range(50)
+                )
+            )
+        return [r.status_code for r in resps]
+
+    codes = asyncio.run(_run())
+    assert len(compares) <= auth.MAX_FAILURES
+    assert codes.count(429) >= 50 - auth.MAX_FAILURES
+
+
+def test_limiter_map_bounded_and_not_evictable(clock) -> None:
+    limiter = auth.FailureLimiter(max_failures=3, window=60, max_keys=100)
+    for _ in range(3):
+        assert limiter.reserve("attacker")
+    assert not limiter.reserve("attacker")
+    for i in range(10_000):
+        limiter.reserve(f"10.{i // 65536}.{i // 256 % 256}.{i % 256}")
+    assert limiter.tracked() <= 100
+    assert all(len(q) <= 3 for q in limiter._attempts.values())
+    # Flooding new keys did not reset the locked-out entry.
+    assert not limiter.reserve("attacker")
+    clock[0] += 61
+    assert limiter.reserve("attacker")
+
+
+def test_release_gives_back_successful_attempts(clock) -> None:
+    limiter = auth.FailureLimiter(max_failures=2, window=60)
+    for _ in range(5):
+        assert limiter.reserve("owner")
+        limiter.release("owner")
+    assert limiter.tracked() == 0
 
 
 # ---------------------------------------------------------------------------
