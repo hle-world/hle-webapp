@@ -180,9 +180,137 @@ def test_login_sets_strict_httponly_cookie(main, tmp_path) -> None:
     assert _token(tmp_path).lower() not in set_cookie
     assert client.get("/api/tunnels").status_code == 200
 
-    client.post("/logout")
-    client.cookies.clear()
+    assert "max-age=" in set_cookie and "path=/" in set_cookie
+
+    out = client.post("/logout")
+    assert out.status_code == 303
+    cleared = out.headers["set-cookie"].lower()
+    assert cleared.startswith(f"{auth.COOKIE_NAME}=") and "max-age=0" in cleared
     assert client.get("/api/tunnels").status_code == 401
+
+
+def test_secure_cookie_over_https(main, tmp_path) -> None:
+    client = TestClient(main.app, follow_redirects=False)
+    resp = client.post(
+        "/login",
+        data={"token": _token(tmp_path)},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert "secure" in resp.headers["set-cookie"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Session values: signed, expiring, invalidated by token rotation
+# ---------------------------------------------------------------------------
+
+
+def test_session_expires_server_side() -> None:
+    now = 1_800_000_000.0
+    value = auth.session_value("tok", now=now)
+    assert auth.session_valid("tok", value, now=now + 60)
+    assert not auth.session_valid("tok", value, now=now + auth.COOKIE_MAX_AGE + 1)
+    # A tampered issue time breaks the signature.
+    issued, _, sig = value.partition(".")
+    assert not auth.session_valid("tok", f"{int(issued) + 999}.{sig}", now=now)
+    assert not auth.session_valid("tok", "garbage", now=now)
+
+
+def test_rotating_token_invalidates_sessions(main, tmp_path) -> None:
+    client = TestClient(main.app, follow_redirects=False)
+    client.post("/login", data={"token": _token(tmp_path)})
+    assert client.get("/api/tunnels").status_code == 200
+
+    # Rotation: delete the token file and restart.
+    old = _token(tmp_path)
+    (tmp_path / auth.TOKEN_FILENAME).unlink()
+    rotated = importlib.reload(sys.modules["backend.main"])
+    assert _token(tmp_path) != old
+    cookie = client.cookies.get(auth.COOKIE_NAME)
+    assert cookie
+    client = TestClient(rotated.app, cookies={auth.COOKIE_NAME: cookie})
+    assert client.get("/api/tunnels").status_code == 401
+    bearer = {"Authorization": f"Bearer {old}"}
+    assert client.get("/api/tunnels", headers=bearer).status_code == 401
+
+
+def test_token_file_created_exclusively(tmp_path, monkeypatch) -> None:
+    seen = {}
+    real_open = auth.os.open
+
+    def _spy(path, flags, mode=0o777):
+        seen["flags"], seen["mode"] = flags, mode
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(auth.os, "open", _spy)
+    auth.load_or_create_token(tmp_path / "ui_token")
+    assert seen["flags"] & auth.os.O_EXCL and seen["flags"] & auth.os.O_CREAT
+    assert seen["mode"] == 0o600
+
+
+# ---------------------------------------------------------------------------
+# No bypass via path tricks or other methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/tunnels/"),
+        ("GET", "//api/tunnels"),
+        ("GET", "/login/../api/tunnels"),
+        ("GET", "/api/../api/tunnels"),
+        ("GET", "/API/tunnels"),
+        ("HEAD", "/api/tunnels"),
+        ("OPTIONS", "/api/tunnels"),
+        ("GET", "/api/config"),
+        ("GET", "/health"),
+        ("GET", "/assets/index.js"),
+        ("GET", "/index.html"),
+        ("GET", "/login/x"),
+    ],
+)
+def test_no_bypass_without_token(main, method, path) -> None:
+    client = TestClient(main.app, follow_redirects=False)
+    resp = client.request(method, path)
+    assert resp.status_code in (401, 303), (method, path, resp.status_code)
+    if resp.status_code == 303:
+        assert resp.headers["location"] == "login"
+
+
+# ---------------------------------------------------------------------------
+# Brute force
+# ---------------------------------------------------------------------------
+
+
+def test_failed_logins_rate_limited(main, tmp_path) -> None:
+    client = TestClient(main.app, follow_redirects=False)
+    for _ in range(auth.MAX_FAILURES):
+        assert client.post("/login", data={"token": "guess"}).status_code == 401
+    # Even the right token is refused while the address is locked out.
+    assert client.post("/login", data={"token": _token(tmp_path)}).status_code == 429
+    resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
+    assert resp.status_code == 429
+
+
+def test_failed_bearer_attempts_rate_limited(main, tmp_path) -> None:
+    client = TestClient(main.app)
+    for _ in range(auth.MAX_FAILURES):
+        resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
+        assert resp.status_code == 401
+    resp = client.get("/api/tunnels", headers={"Authorization": "Bearer guess"})
+    assert resp.status_code == 429
+    assert client.post("/login", data={"token": "guess"}).status_code == 429
+
+
+def test_limiter_window_expires(monkeypatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
+    limiter = auth.FailureLimiter(max_failures=2, window=10)
+    limiter.record("a")
+    limiter.record("a")
+    assert limiter.blocked("a") and not limiter.blocked("b")
+    clock[0] += 11
+    assert not limiter.blocked("a")
 
 
 # ---------------------------------------------------------------------------
