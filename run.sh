@@ -19,7 +19,11 @@ if [ -z "${HLE_API_KEY}" ]; then
 fi
 
 PORT="${HLE_PORT:-8099}"
+# Loopback only by default. Set HLE_BIND_HOST=0.0.0.0 to reach the UI from
+# other machines; every route still requires the login token either way.
+BIND_HOST="${HLE_BIND_HOST:-127.0.0.1}"
+export HLE_DATA_DIR="${DATA_DIR}"
 mkdir -p "${DATA_DIR}/logs"
 
-echo "[hle] Starting HLE on port ${PORT}..."
-exec python3 -m uvicorn backend.main:app --host 0.0.0.0 --port "${PORT}" --app-dir "${APP_DIR}"
+echo "[hle] Starting HLE on ${BIND_HOST}:${PORT}..."
+exec python3 -m uvicorn backend.main:app --host "${BIND_HOST}" --port "${PORT}" --app-dir "${APP_DIR}"

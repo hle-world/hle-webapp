@@ -139,8 +139,12 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
   const [editAuthMode, setEditAuthMode] = useState<'sso' | 'none'>(tunnel.auth_mode)
   const [editVerifySsl, setEditVerifySsl] = useState(tunnel.verify_ssl)
   const [editWebsocket, setEditWebsocket] = useState(tunnel.websocket_enabled)
-  const [editApiKey, setEditApiKey] = useState(tunnel.api_key ?? '')
-  const [editUpstreamBasicAuth, setEditUpstreamBasicAuth] = useState(tunnel.upstream_basic_auth ?? '')
+  // Secret fields start empty: the API never returns stored values. Blank means
+  // "keep what is saved"; the clear flags remove a saved value.
+  const [editApiKey, setEditApiKey] = useState('')
+  const [editClearApiKey, setEditClearApiKey] = useState(false)
+  const [editUpstreamBasicAuth, setEditUpstreamBasicAuth] = useState('')
+  const [editClearUpstreamBasicAuth, setEditClearUpstreamBasicAuth] = useState(false)
   const [editForwardHost, setEditForwardHost] = useState(tunnel.forward_host)
   const [editResponseTimeout, setEditResponseTimeout] = useState(tunnel.response_timeout?.toString() ?? '')
   const [editWebhookPath, setEditWebhookPath] = useState(tunnel.webhook_path ?? '')
@@ -175,8 +179,10 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
       setEditAuthMode(tunnel.auth_mode)
       setEditVerifySsl(tunnel.verify_ssl)
       setEditWebsocket(tunnel.websocket_enabled)
-      setEditApiKey(tunnel.api_key ?? '')
-      setEditUpstreamBasicAuth(tunnel.upstream_basic_auth ?? '')
+      setEditApiKey('')
+      setEditClearApiKey(false)
+      setEditUpstreamBasicAuth('')
+      setEditClearUpstreamBasicAuth(false)
       setEditForwardHost(tunnel.forward_host)
       setEditResponseTimeout(tunnel.response_timeout?.toString() ?? '')
       setEditWebhookPath(tunnel.webhook_path ?? '')
@@ -224,13 +230,18 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
   async function handleSaveEdit() {
     setEditSaving(true)
     setError('')
+    // Omitted = unchanged, "" = clear the saved value, otherwise replace it.
+    const apiKey = editApiKey ? editApiKey : editClearApiKey ? '' : undefined
+    const upstreamBasicAuth = editUpstreamBasicAuth
+      ? editUpstreamBasicAuth
+      : editClearUpstreamBasicAuth ? '' : undefined
     try {
       await updateTunnel(tunnel.id, isWebhook ? {
         service_url: editServiceUrl,
         label: editLabel,
         name: editName || undefined,
         webhook_path: editWebhookPath || undefined,
-        api_key: editApiKey || null,
+        api_key: apiKey,
         response_timeout: editResponseTimeout ? parseInt(editResponseTimeout, 10) : null,
       } : {
         service_url: editServiceUrl,
@@ -239,8 +250,8 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
         auth_mode: editAuthMode,
         verify_ssl: editVerifySsl,
         websocket_enabled: editWebsocket,
-        api_key: editApiKey || null,
-        upstream_basic_auth: editUpstreamBasicAuth || null,
+        api_key: apiKey,
+        upstream_basic_auth: upstreamBasicAuth,
         forward_host: editForwardHost,
         response_timeout: editResponseTimeout ? parseInt(editResponseTimeout, 10) : null,
       })
@@ -542,11 +553,22 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>
               API key override{' '}
-              <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(leave blank to use global key; set to clear override)</span>
+              <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>
+                {tunnel.api_key_set ? '(saved — leave blank to keep it)' : '(leave blank to use global key)'}
+              </span>
             </label>
             <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editApiKey}
               onChange={e => setEditApiKey(e.target.value)}
-              placeholder="hle_... (optional)" type="password" />
+              disabled={editClearApiKey}
+              placeholder={tunnel.api_key_set ? `${tunnel.api_key_masked ?? 'saved'} (type to replace)` : 'hle_... (optional)'}
+              type="password" autoComplete="new-password" />
+            {tunnel.api_key_set && (
+              <label style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="checkbox" checked={editClearApiKey}
+                  onChange={e => { setEditClearApiKey(e.target.checked); setEditApiKey('') }} />
+                Remove override (use global key)
+              </label>
+            )}
           </div>
 
           {!isWebhook && (
@@ -557,7 +579,18 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               </label>
               <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editUpstreamBasicAuth}
                 onChange={e => setEditUpstreamBasicAuth(e.target.value)}
-                placeholder="username:password (optional)" type="password" />
+                disabled={editClearUpstreamBasicAuth}
+                placeholder={tunnel.has_upstream_basic_auth
+                  ? `saved for user "${tunnel.upstream_basic_auth_user ?? ''}" (type user:pass to replace)`
+                  : 'username:password (optional)'}
+                type="password" autoComplete="new-password" />
+              {tunnel.has_upstream_basic_auth && (
+                <label style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input type="checkbox" checked={editClearUpstreamBasicAuth}
+                    onChange={e => { setEditClearUpstreamBasicAuth(e.target.checked); setEditUpstreamBasicAuth('') }} />
+                  Remove upstream basic auth
+                </label>
+              )}
             </div>
           )}
 

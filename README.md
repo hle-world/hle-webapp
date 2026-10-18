@@ -28,12 +28,28 @@ pip install -r requirements.txt
 
 Open `http://localhost:8099` to configure your API key and manage tunnels.
 
+## Login token
+
+The web UI and every `/api` route require a login token. On first start a
+random token is generated, printed once in the logs, and stored in
+`$HLE_DATA_DIR/ui_token` (mode 0600). Paste it into the login page; the
+browser then keeps an HttpOnly session cookie. Scripts can send it as
+`Authorization: Bearer <token>` instead.
+
+Lost the token? Read it from `$HLE_DATA_DIR/ui_token`, or delete that file and
+restart to generate a new one (this logs out every browser).
+
+By default the server listens on `127.0.0.1` only. Set `HLE_BIND_HOST=0.0.0.0`
+to reach it from other machines.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HLE_API_KEY` | — | API key (can also be set via web UI) |
 | `HLE_PORT` | `8099` | Web UI port |
+| `HLE_BIND_HOST` | `127.0.0.1` | Interface to listen on (`0.0.0.0` for all) |
+| `HLE_UI_TOKEN` | generated | Fixed login token instead of the generated one |
 | `HLE_DATA_DIR` | `/var/lib/hle` | Persistent data directory |
 
 ## How It Works
