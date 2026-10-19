@@ -6,8 +6,11 @@ export interface TunnelStatus {
   auth_mode: 'sso' | 'none'
   verify_ssl: boolean
   websocket_enabled: boolean
-  api_key: string | null
-  upstream_basic_auth: string | null
+  // Secrets are never returned; these only say whether one is set.
+  api_key_set: boolean
+  api_key_masked: string | null
+  has_upstream_basic_auth: boolean
+  upstream_basic_auth_user: string | null
   forward_host: boolean
   response_timeout: number | null
   subdomain: string | null
@@ -76,6 +79,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   })
+  // The backend's login gate marks its 401s with WWW-Authenticate; relay
+  // errors passed through as 401 do not, so they still surface as errors.
+  if (res.status === 401 && res.headers.has('WWW-Authenticate')) {
+    window.location.href = 'login'
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(`${res.status}: ${text}`)
