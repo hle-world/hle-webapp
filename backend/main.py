@@ -232,23 +232,44 @@ def _favicon_response(data: bytes, media_type: str) -> Response:
     )
 
 
-async def _fetch_same_origin(client, url: str, origin: str, max_redirects: int = 5):
-    """GET ``url``, following only redirects that stay on ``origin``.
+async def _read_capped(resp, limit: int) -> bytes | None:
+    """Read at most ``limit`` bytes of a streamed body; ``None`` if it is larger.
 
-    Following the upstream's redirect to another host would be SSRF, so a
-    cross-origin ``Location`` (or too many hops) returns ``None`` and the
-    caller treats it as "no favicon".
+    The upstream is attacker controlled, so the cap is enforced while reading
+    rather than after the whole body has been buffered.
+    """
+    declared = resp.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > limit:
+        return None
+    body = bytearray()
+    async for chunk in resp.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
+async def _fetch_same_origin(
+    client, url: str, origin: str, limit: int, max_redirects: int = 5
+) -> tuple[httpx.URL, bytes] | None:
+    """GET ``url`` and return ``(final_url, body)`` for a 200 response.
+
+    Only redirects that stay on ``origin`` are followed: following the
+    upstream's redirect to another host would be SSRF. A cross-origin
+    ``Location``, too many hops, a non-200 status or a body over ``limit``
+    bytes all return ``None``, which the caller treats as "no favicon".
     """
     for _ in range(max_redirects + 1):
-        resp = await client.get(url, follow_redirects=False)
-        if not resp.is_redirect:
-            return resp
-        location = resp.headers.get("location")
-        if not location:
-            return resp
-        url = str(resp.url.join(location))
-        if _url_origin(url) != origin:
-            return None
+        async with client.stream("GET", url, follow_redirects=False) as resp:
+            if resp.is_redirect and resp.headers.get("location"):
+                url = str(resp.url.join(resp.headers["location"]))
+                if _url_origin(url) != origin:
+                    return None
+                continue
+            if resp.status_code != 200:
+                return None
+            body = await _read_capped(resp, limit)
+            return None if body is None else (resp.url, body)
     return None
 
 
@@ -291,14 +312,16 @@ async def get_tunnel_favicon(tunnel_id: str):
     async with httpx.AsyncClient(timeout=5, verify=False) as client:  # nosec B501 — local LAN services often use self-signed certs
         for path in favicon_paths:
             try:
-                resp = await _fetch_same_origin(client, f"{service_url}{path}", origin)
+                fetched = await _fetch_same_origin(
+                    client, f"{service_url}{path}", origin, MAX_FAVICON_BYTES
+                )
             except Exception:
                 continue
-            if resp is None or resp.status_code != 200:
+            if fetched is None:
                 continue
-            data = resp.content
+            data = fetched[1]
             media_type = _sniff_image(data)
-            if media_type is not None and 0 < len(data) <= MAX_FAVICON_BYTES:
+            if media_type is not None and len(data) > 0:
                 icon_data = data
                 icon_media = media_type
                 break
@@ -306,9 +329,12 @@ async def get_tunnel_favicon(tunnel_id: str):
         # Fallback: parse <link rel="icon"> from HTML
         if icon_data is None:
             try:
-                resp = await _fetch_same_origin(client, service_url, origin)
-                if resp is not None and resp.status_code == 200:
-                    html = resp.text[:8192]  # only scan the head
+                # Pages are often larger than the head we scan, so this fetch
+                # gets a generous cap and only the first 8 KiB is searched.
+                page = await _fetch_same_origin(client, service_url, origin, 2 * 1024 * 1024)
+                if page is not None:
+                    page_url, page_body = page
+                    html = page_body[:8192].decode("utf-8", "replace")  # only scan the head
                     match = re.search(
                         r'<link[^>]+rel=["\'](?:shortcut )?icon["\'][^>]+href=["\']([^"\']+)',
                         html,
@@ -317,16 +343,13 @@ async def get_tunnel_favicon(tunnel_id: str):
                     if match:
                         # Resolve relative to the (same-origin) final URL and
                         # refuse anything that escapes the service's origin.
-                        href = str(resp.url.join(match.group(1)))
+                        href = str(page_url.join(match.group(1)))
                         if _url_origin(href) == origin:
-                            icon_resp = await _fetch_same_origin(client, href, origin)
-                            if icon_resp is not None and icon_resp.status_code == 200:
-                                data = icon_resp.content
+                            icon = await _fetch_same_origin(client, href, origin, MAX_FAVICON_BYTES)
+                            if icon is not None:
+                                data = icon[1]
                                 media_type = _sniff_image(data)
-                                if (
-                                    media_type is not None
-                                    and 0 < len(data) <= MAX_FAVICON_BYTES
-                                ):
+                                if media_type is not None and len(data) > 0:
                                     icon_data = data
                                     icon_media = media_type
             except Exception:
