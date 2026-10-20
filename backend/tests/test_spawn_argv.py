@@ -13,7 +13,7 @@ from hle_client.cli import tunnel_create, webhook
 from pydantic import ValidationError
 
 from backend.models import AddTunnelRequest, TunnelConfig, UpdateTunnelRequest
-from backend.tunnel_manager import _build_argv
+from backend.tunnel_manager import _build_argv, _build_env
 
 
 def _parse(cmd: click.Command, argv: list[str]) -> dict:
@@ -33,7 +33,7 @@ def test_expose_argv_uses_tunnel_create_with_events() -> None:
     assert argv[:3] == ["hle", "tunnel", "create"]
     # --events jsonl is what lets us parse stdout instead of scraping glyphs.
     assert "--events" in argv and argv[argv.index("--events") + 1] == "jsonl"
-    # `--` separates the options from the positionals (jspanos/hle#630).
+    # `--` separates the options from the positionals.
     assert argv[-3:] == ["--", "svc", "http://localhost:8080"]
     params = _parse(tunnel_create, argv[3:])
     assert params["first"] == "svc"
@@ -72,9 +72,32 @@ def test_expose_argv_all_flags_accepted_by_cli() -> None:
     params = _parse(tunnel_create, argv[3:])
     assert params["verify_ssl"] is True
     assert params["websocket"] is False
-    assert params["upstream_basic_auth"] == "u:p"
+    # Credentials never ride in argv where `ps` can read them.
+    assert "--upstream-basic-auth" not in argv
+    assert "u:p" not in argv
+    assert params["upstream_basic_auth"] is None
     assert params["forward_host"] is True
     assert params["auth"] == "none"
+
+
+def test_upstream_basic_auth_goes_through_env_not_argv(monkeypatch) -> None:
+    monkeypatch.delenv("HLE_UPSTREAM_BASIC_AUTH", raising=False)
+    cfg = _cfg(upstream_basic_auth="admin:hunter2")
+
+    argv = _build_argv(cfg)
+    assert "--upstream-basic-auth" not in argv
+    assert "admin:hunter2" not in argv
+
+    env = _build_env(cfg)
+    assert env["HLE_UPSTREAM_BASIC_AUTH"] == "admin:hunter2"
+
+
+def test_env_omits_upstream_basic_auth_and_keeps_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("HLE_UPSTREAM_BASIC_AUTH", raising=False)
+    assert "HLE_UPSTREAM_BASIC_AUTH" not in _build_env(_cfg())
+    assert _build_env(_cfg(api_key="hle_" + "k" * 28))["HLE_API_KEY"] == (
+        "hle_" + "k" * 28
+    )
 
 
 def test_webhook_argv_with_events_is_accepted_by_cli() -> None:
@@ -104,7 +127,7 @@ def test_unknown_option_is_rejected_by_cli() -> None:
 
 
 def test_add_request_rejects_option_like_label() -> None:
-    """A label that click would parse as an option must be rejected (jspanos/hle#630)."""
+    """A label that click would parse as an option must be rejected."""
     with pytest.raises(ValidationError):
         AddTunnelRequest(label="--apex", service_url="http://nas")
     with pytest.raises(ValidationError):

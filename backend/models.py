@@ -80,7 +80,7 @@ class _TunnelRequestValidator(_TimeoutValidator):
 
     ``label`` and ``service_url`` are handed to the spawned ``hle`` CLI as
     positional arguments. Validating them here stops a crafted value such as
-    ``--apex`` from being parsed by click as an option (see jspanos/hle#630).
+    ``--apex`` from being parsed by click as an option.
     """
 
     @field_validator("label", check_fields=False)

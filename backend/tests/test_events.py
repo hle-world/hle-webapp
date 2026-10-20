@@ -9,6 +9,8 @@ rather than crashing the reader task.
 from __future__ import annotations
 
 import json
+import os
+import stat
 
 import pytest
 
@@ -213,3 +215,32 @@ def test_non_event_does_not_clobber_existing_state(tmp_path, monkeypatch) -> Non
     tm._parse_event_line("t1", "WARNING: something on stdout")
     assert "t1" in tm._connected
     assert tm._load_all()["t1"].subdomain == "svc-x7k"
+
+
+# ---------------------------------------------------------------------------
+# Persistence: private mode and HLE_DATA_DIR
+# ---------------------------------------------------------------------------
+
+
+def test_save_all_writes_private_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(tm, "DATA_FILE", tmp_path / "tunnels.json")
+    tm._save_all({"t1": _cfg()})
+    assert stat.S_IMODE(tm.DATA_FILE.stat().st_mode) == 0o600
+
+
+def test_save_all_tightens_a_preexisting_world_readable_file(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "tunnels.json"
+    path.write_text("{}")
+    os.chmod(path, 0o644)
+    monkeypatch.setattr(tm, "DATA_FILE", path)
+    tm._save_all({"t1": _cfg()})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_data_dir_honours_hle_data_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HLE_DATA_DIR", str(tmp_path))
+    assert tm._data_dir() == tmp_path
+    assert tm._data_dir() / "tunnels.json" == tmp_path / "tunnels.json"
+    assert tm._data_dir() / "logs" == tmp_path / "logs"
