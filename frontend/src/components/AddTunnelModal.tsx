@@ -110,10 +110,12 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
           </button>
         </div>
 
+        {/* data-sensitive marks install-specific values (names, URLs, addresses,
+            emails, tokens) so the docs screenshot pipeline can mask them. */}
         {isWebhook && (
           <div style={fieldStyle}>
             <label style={labelStyle}>Webhook Path</label>
-            <input style={inputStyle} value={webhookPath}
+            <input style={inputStyle} data-sensitive="" value={webhookPath}
               onChange={e => setWebhookPath(e.target.value)}
               placeholder="/webhook/github" />
             <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
@@ -124,7 +126,7 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
 
         <div style={fieldStyle}>
           <label style={labelStyle}>{isWebhook ? 'Forward To' : 'Service URL'}</label>
-          <input style={inputStyle} value={serviceUrl} onChange={e => setServiceUrl(e.target.value)}
+          <input style={inputStyle} data-sensitive="" value={serviceUrl} onChange={e => setServiceUrl(e.target.value)}
             placeholder={isWebhook ? 'http://localhost:3000/webhook' : 'http://192.168.1.50:8096'} />
           {isWebhook && (
             <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
@@ -135,20 +137,20 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
 
         <div style={fieldStyle}>
           <label style={labelStyle}>Name <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(display only, optional)</span></label>
-          <input style={inputStyle} value={name} onChange={e => setName(e.target.value)}
+          <input style={inputStyle} data-sensitive="" value={name} onChange={e => setName(e.target.value)}
             placeholder={isWebhook ? 'e.g. GitHub Webhooks, Stripe Events' : 'e.g. Proxmox, Jellyfin, Home Assistant'} />
         </div>
 
         <div style={fieldStyle}>
           <label style={labelStyle}>Label <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(used in subdomain)</span></label>
-          <input style={inputStyle} value={label}
+          <input style={inputStyle} data-sensitive="" value={label}
             onChange={e => setLabel(e.target.value.toLowerCase().replace(/[_ .]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-'))}
             placeholder={isWebhook ? 'github-hook' : 'jellyfin'} />
           <span style={{ fontSize: 12, color: 'var(--text-xdim)' }}>
             {isWebhook ? (
-              <>Webhook URL: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world{webhookPath}</code></>
+              <>Webhook URL: <code data-sensitive="" style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world{webhookPath}</code></>
             ) : (
-              <>Subdomain: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world</code></>
+              <>Subdomain: <code data-sensitive="" style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{label || 'label'}-<span style={{ opacity: 0.5 }}>xxx</span>.hle.world</code></>
             )}
           </span>
           <span style={{ fontSize: 11, color: 'var(--text-xdim)' }}>
@@ -199,7 +201,7 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
                   <label style={{ ...labelStyle, fontSize: 12 }}>
                     Upstream basic auth <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(optional — user:pass injected into forwarded requests)</span>
                   </label>
-                  <input style={{ ...inputStyle, fontSize: 13 }} value={upstreamBasicAuth}
+                  <input style={{ ...inputStyle, fontSize: 13 }} data-sensitive="" value={upstreamBasicAuth}
                     onChange={e => setUpstreamBasicAuth(e.target.value)}
                     placeholder="username:password" type="password" />
                 </div>
@@ -210,7 +212,7 @@ export function AddTunnelModal({ onClose, onAdded }: Props) {
               <label style={{ ...labelStyle, fontSize: 12 }}>
                 API key override <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(optional — uses global key if blank)</span>
               </label>
-              <input style={{ ...inputStyle, fontSize: 13 }} value={apiKeyOverride}
+              <input style={{ ...inputStyle, fontSize: 13 }} data-sensitive="" value={apiKeyOverride}
                 onChange={e => setApiKeyOverride(e.target.value)}
                 placeholder="hle_..." type="password" />
             </div>
