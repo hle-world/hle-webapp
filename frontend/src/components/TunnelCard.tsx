@@ -388,6 +388,8 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
       )}
 
       {/* Header */}
+      {/* data-sensitive marks install-specific values (names, URLs, addresses,
+          emails, tokens) so the docs screenshot pipeline can mask them. */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -401,9 +403,9 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 onError={() => setFaviconOk(false)}
               />
             )}
-            {tunnel.name || tunnel.label}
+            <span data-sensitive="">{tunnel.name || tunnel.label}</span>
             {tunnel.name && (
-              <span style={{ color: 'var(--text-xdim)', fontWeight: 400, marginLeft: 8, fontSize: 12 }}>
+              <span data-sensitive="" style={{ color: 'var(--text-xdim)', fontWeight: 400, marginLeft: 8, fontSize: 12 }}>
                 {tunnel.label}
               </span>
             )}
@@ -411,21 +413,21 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               {isWebhook ? '🔗 Webhook' : isSso ? '🔒 SSO' : '🌐 Open'}
             </span>
           </span>
-          <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{tunnel.service_url}</span>
+          <span data-sensitive="" style={{ color: 'var(--text-dim)', fontSize: 12 }}>{tunnel.service_url}</span>
           {tunnel.state === 'CONNECTING' && (
-            <span style={{ color: 'var(--yellow)', fontSize: 12 }}>
+            <span data-sensitive="" style={{ color: 'var(--yellow)', fontSize: 12 }}>
               {tunnel.error
                 ? `Connection issue: ${tunnel.error}`
                 : 'Process running — connecting to relay…'}
             </span>
           )}
           {tunnel.state === 'FAILED' && (
-            <span style={{ color: 'var(--red)', fontSize: 12 }}>
+            <span data-sensitive="" style={{ color: 'var(--red)', fontSize: 12 }}>
               Process exited unexpectedly.{tunnel.error ? ` Last log: ${tunnel.error}` : ' Check Logs for details.'}
             </span>
           )}
           {tunnel.subdomain && !tunnel.public_url && (
-            <span style={{ color: 'var(--text-xdim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+            <span data-sensitive="" style={{ color: 'var(--text-xdim)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
               {tunnel.subdomain}
             </span>
           )}
@@ -440,7 +442,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '6px 10px',
         }}>
-          <a href={tunnel.public_url} target="_blank" rel="noreferrer"
+          <a href={tunnel.public_url} target="_blank" rel="noreferrer" data-sensitive=""
             style={{
               color: 'var(--mint)', fontSize: 13, fontFamily: 'var(--font-mono)',
               flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -524,20 +526,20 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>{isWebhook ? 'Forward To' : 'Service URL'}</label>
-              <input style={inputSm} value={editServiceUrl} onChange={e => setEditServiceUrl(e.target.value)} />
+              <input style={inputSm} data-sensitive="" value={editServiceUrl} onChange={e => setEditServiceUrl(e.target.value)} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Label (subdomain prefix)</label>
-              <input style={inputSm} value={editLabel} onChange={e => setEditLabel(e.target.value.toLowerCase().replace(/[_ .]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-'))} />
+              <input style={inputSm} data-sensitive="" value={editLabel} onChange={e => setEditLabel(e.target.value.toLowerCase().replace(/[_ .]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-'))} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Display name (optional)</label>
-              <input style={inputSm} value={editName} onChange={e => setEditName(e.target.value)} placeholder={isWebhook ? 'e.g. GitHub Events' : 'e.g. Home Assistant'} />
+              <input style={inputSm} data-sensitive="" value={editName} onChange={e => setEditName(e.target.value)} placeholder={isWebhook ? 'e.g. GitHub Events' : 'e.g. Home Assistant'} />
             </div>
             {isWebhook ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>Webhook Path</label>
-                <input style={inputSm} value={editWebhookPath} onChange={e => setEditWebhookPath(e.target.value)} placeholder="/webhook/github" />
+                <input style={inputSm} data-sensitive="" value={editWebhookPath} onChange={e => setEditWebhookPath(e.target.value)} placeholder="/webhook/github" />
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -557,7 +559,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 {tunnel.api_key_set ? '(saved — leave blank to keep it)' : '(leave blank to use global key)'}
               </span>
             </label>
-            <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editApiKey}
+            <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} data-sensitive="" value={editApiKey}
               onChange={e => setEditApiKey(e.target.value)}
               disabled={editClearApiKey}
               placeholder={tunnel.api_key_set ? `${tunnel.api_key_masked ?? 'saved'} (type to replace)` : 'hle_... (optional)'}
@@ -577,7 +579,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 Upstream basic auth{' '}
                 <span style={{ color: 'var(--text-xdim)', fontWeight: 400 }}>(user:pass — injected into requests forwarded to the local service)</span>
               </label>
-              <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} value={editUpstreamBasicAuth}
+              <input style={{ ...inputSm, fontFamily: 'var(--font-mono)' }} data-sensitive="" value={editUpstreamBasicAuth}
                 onChange={e => setEditUpstreamBasicAuth(e.target.value)}
                 disabled={editClearUpstreamBasicAuth}
                 placeholder={tunnel.has_upstream_basic_auth
@@ -666,14 +668,14 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 {(rules ?? []).map(r => (
                   <div key={r.id} style={{ ...row, justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 13 }}>
-                      {r.allowed_email}
+                      <span data-sensitive="">{r.allowed_email}</span>
                       <span style={{ color: 'var(--text-xdim)', marginLeft: 6 }}>via {r.provider}</span>
                     </span>
                     <button style={{ ...btn('danger'), padding: '2px 8px' }} onClick={() => handleDeleteRule(r.id)}>✕</button>
                   </div>
                 ))}
                 <div style={row}>
-                  <input value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                  <input data-sensitive="" value={newEmail} onChange={e => setNewEmail(e.target.value)}
                     placeholder="email@example.com" type="email" style={{ ...inputSm, flex: 1 }} />
                   <select value={newProvider} onChange={e => setNewProvider(e.target.value)} style={inputSm}>
                     {['any', 'google', 'github', 'hle'].map(p => <option key={p}>{p}</option>)}
@@ -710,7 +712,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={row}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <input value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                      <input data-sensitive="" value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                         placeholder="4-8 digits" type="password" maxLength={8}
                         style={pinTouched && !pinValid ? inputErr : { ...inputSm, width: 120 }} />
                       {pinTouched && !pinValid && (
@@ -718,7 +720,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <input value={confirmPin} onChange={e => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                      <input data-sensitive="" value={confirmPin} onChange={e => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                         placeholder="Confirm PIN" type="password" maxLength={8}
                         style={confirmPinTouched && !pinMatch ? inputErr : { ...inputSm, width: 120 }} />
                       {confirmPinTouched && !pinMatch && (
@@ -749,7 +751,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
             : <>
               <span style={{ fontSize: 13, color: basicAuth?.has_basic_auth ? 'var(--green)' : 'var(--text-xdim)' }}>
                 {basicAuth?.has_basic_auth
-                  ? `Enabled (user: ${basicAuth.username})`
+                  ? <>Enabled (user: <span data-sensitive="">{basicAuth.username}</span>)</>
                   : 'Not configured'}
               </span>
 
@@ -766,7 +768,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <input value={baUsername} onChange={e => setBaUsername(e.target.value)}
+                      <input data-sensitive="" value={baUsername} onChange={e => setBaUsername(e.target.value)}
                         placeholder="username" autoComplete="off"
                         style={baUsernameTouched && !baUsernameValid ? inputErr : { ...inputSm }} />
                       {baUsernameTouched && !baUsernameValid && (
@@ -777,7 +779,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                     </div>
                     <div />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <input value={baPassword} onChange={e => setBaPassword(e.target.value)}
+                      <input data-sensitive="" value={baPassword} onChange={e => setBaPassword(e.target.value)}
                         placeholder="password (min 8 chars)" type="password" autoComplete="new-password"
                         style={baPasswordTouched && !baPasswordValid ? inputErr : { ...inputSm }} />
                       {baPasswordTouched && !baPasswordValid && (
@@ -785,7 +787,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <input value={baConfirmPassword} onChange={e => setBaConfirmPassword(e.target.value)}
+                      <input data-sensitive="" value={baConfirmPassword} onChange={e => setBaConfirmPassword(e.target.value)}
                         placeholder="confirm password" type="password" autoComplete="new-password"
                         style={baConfirmTouched && !baPasswordMatch ? inputErr : { ...inputSm }} />
                       {baConfirmTouched && !baPasswordMatch && (
@@ -819,11 +821,11 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               {newShareUrl && (
                 <div style={{ background: 'var(--green-tint-bg)', border: '1px solid var(--green-tint-border)', borderRadius: 6, padding: '8px 12px' }}>
                   <span style={{ fontSize: 12, color: 'var(--green)', display: 'block', marginBottom: 4 }}>Link created:</span>
-                  <a href={newShareUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--mint)', fontSize: 13, wordBreak: 'break-all' }}>{newShareUrl}</a>
+                  <a href={newShareUrl} target="_blank" rel="noreferrer" data-sensitive="" style={{ color: 'var(--mint)', fontSize: 13, wordBreak: 'break-all' }}>{newShareUrl}</a>
                 </div>
               )}
               <div style={row}>
-                <input value={shareLabel} onChange={e => setShareLabel(e.target.value)}
+                <input data-sensitive="" value={shareLabel} onChange={e => setShareLabel(e.target.value)}
                   placeholder="Label (optional)" style={{ ...inputSm, flex: 1 }} />
                 <select value={shareDuration} onChange={e => setShareDuration(e.target.value as '1h' | '24h' | '7d')} style={inputSm}>
                   {['1h', '24h', '7d'].map(d => <option key={d}>{d}</option>)}
@@ -836,7 +838,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                   <div key={l.id} style={{ ...row, justifyContent: 'space-between', fontSize: 13 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <span style={{ color: l.is_active ? 'var(--text)' : 'var(--text-xdim)' }}>
-                        {l.label || `Link #${l.id}`}
+                        <span data-sensitive="">{l.label || `Link #${l.id}`}</span>
                         <span style={{ color: 'var(--text-xdim)', marginLeft: 8 }}>expires {new Date(l.expires_at).toLocaleDateString()}</span>
                         {l.max_uses && <span style={{ color: 'var(--text-xdim)', marginLeft: 8 }}>{l.use_count}/{l.max_uses} uses</span>}
                       </span>
@@ -881,7 +883,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
               </button>
             </div>
           </div>
-          <pre ref={logsRef} onScroll={handleLogsScroll} style={{
+          <pre ref={logsRef} onScroll={handleLogsScroll} data-sensitive="" style={{
             background: 'var(--surface)', borderRadius: 6, padding: '10px 12px',
             fontSize: 11, color: 'var(--text-dim)', overflowX: 'auto', maxHeight: 280,
             overflowY: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
@@ -915,7 +917,7 @@ export function TunnelCard({ tunnel, onRefresh }: Props) {
                 return (
                   <div key={i} style={{ display: 'flex', gap: 8, fontSize: 13, alignItems: 'baseline' }}>
                     <span style={{ color: colour, width: 14, flexShrink: 0 }}>{glyph}</span>
-                    <span style={{ flex: 1 }}>{n.message}</span>
+                    <span style={{ flex: 1 }} data-sensitive="">{n.message}</span>
                     <span style={{ color: 'var(--text-dim)', fontSize: 11, flexShrink: 0 }}>
                       {new Date(n.ts).toLocaleTimeString()}
                     </span>

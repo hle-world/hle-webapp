@@ -106,13 +106,16 @@ function SettingsContent({
         <div style={{ fontSize: 13, color: 'var(--text-dim)', fontWeight: 500, marginBottom: 6 }}>API Key</div>
         {masked && (
           <p style={{ fontSize: 13, color: 'var(--text-xdim)', margin: '0 0 8px' }}>
-            Current: <code style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{masked}</code>
+            {/* data-sensitive marks install-specific values so the docs
+                screenshot pipeline can mask them via CSS. */}
+            Current: <code data-sensitive="" style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{masked}</code>
           </p>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             style={{ ...inputStyle, flex: 1 }}
             type="password"
+            data-sensitive=""
             value={apiKey}
             onChange={e => setApiKey(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && saveKey()}
