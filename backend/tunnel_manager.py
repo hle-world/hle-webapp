@@ -95,9 +95,13 @@ def _build_argv(cfg: TunnelConfig) -> list[str]:
     ``--option`` keys. The relay applies its own default. Passing ``--timeout``
     made every tunnel with a timeout configured fail to start ("No such
     option: --timeout").
+
+    In the ``create`` form the label and service URL are positionals. The
+    options come first and a ``--`` separator ends option parsing, so a
+    malformed value can never be read by click as an option (jspanos/hle#630).
     """
     if cfg.webhook_path:
-        cmd = [
+        return [
             "hle",
             "tunnel",
             "webhook",
@@ -107,26 +111,27 @@ def _build_argv(cfg: TunnelConfig) -> list[str]:
             cfg.service_url,
             "--label",
             cfg.label,
+            "--events",
+            "jsonl",
         ]
-    else:
-        cmd = [
-            "hle",
-            "tunnel",
-            "create",
-            cfg.label,
-            cfg.service_url,
-            "--auth",
-            cfg.auth_mode,
-        ]
-        if cfg.verify_ssl:
-            cmd.append("--verify-ssl")
-        if not cfg.websocket_enabled:
-            cmd.append("--no-websocket")
-        if cfg.upstream_basic_auth:
-            cmd.extend(["--upstream-basic-auth", cfg.upstream_basic_auth])
-        if cfg.forward_host:
-            cmd.append("--forward-host")
+
+    cmd = [
+        "hle",
+        "tunnel",
+        "create",
+        "--auth",
+        cfg.auth_mode,
+    ]
+    if cfg.verify_ssl:
+        cmd.append("--verify-ssl")
+    if not cfg.websocket_enabled:
+        cmd.append("--no-websocket")
+    if cfg.upstream_basic_auth:
+        cmd.extend(["--upstream-basic-auth", cfg.upstream_basic_auth])
+    if cfg.forward_host:
+        cmd.append("--forward-host")
     cmd.extend(["--events", "jsonl"])
+    cmd.extend(["--", cfg.label, cfg.service_url])
     return cmd
 
 

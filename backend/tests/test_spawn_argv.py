@@ -10,8 +10,9 @@ from __future__ import annotations
 import click
 import pytest
 from hle_client.cli import tunnel_create, webhook
+from pydantic import ValidationError
 
-from backend.models import TunnelConfig
+from backend.models import AddTunnelRequest, TunnelConfig, UpdateTunnelRequest
 from backend.tunnel_manager import _build_argv
 
 
@@ -31,11 +32,21 @@ def test_expose_argv_uses_tunnel_create_with_events() -> None:
     argv = _build_argv(_cfg())
     assert argv[:3] == ["hle", "tunnel", "create"]
     # --events jsonl is what lets us parse stdout instead of scraping glyphs.
-    assert argv[-2:] == ["--events", "jsonl"]
+    assert "--events" in argv and argv[argv.index("--events") + 1] == "jsonl"
+    # `--` separates the options from the positionals (jspanos/hle#630).
+    assert argv[-3:] == ["--", "svc", "http://localhost:8080"]
     params = _parse(tunnel_create, argv[3:])
     assert params["first"] == "svc"
     assert params["second"] == "http://localhost:8080"
     assert params["events"] == "jsonl"
+
+
+def test_expose_argv_separates_positionals_with_double_dash() -> None:
+    """A positional must sit after ``--`` so click never reads it as an option."""
+    argv = _build_argv(_cfg(label="--apex", service_url="http://nas"))
+    assert "--" in argv
+    assert argv.index("--") < argv.index("--apex")
+    assert argv[argv.index("--") + 1 :] == ["--apex", "http://nas"]
 
 
 def test_expose_argv_with_response_timeout_is_accepted_by_cli() -> None:
@@ -85,6 +96,47 @@ def test_webhook_argv_with_events_is_accepted_by_cli() -> None:
 
 def test_unknown_option_is_rejected_by_cli() -> None:
     """Guard that the check above is meaningful: click really rejects bad flags."""
-    argv = _build_argv(_cfg()) + ["--timeout", "300"]
+    argv = _build_argv(_cfg())
+    # Inject before the `--` separator: after it everything is a positional.
+    argv[argv.index("--") : argv.index("--")] = ["--timeout", "300"]
     with pytest.raises(click.NoSuchOption):
         _parse(tunnel_create, argv[3:])
+
+
+def test_add_request_rejects_option_like_label() -> None:
+    """A label that click would parse as an option must be rejected (jspanos/hle#630)."""
+    with pytest.raises(ValidationError):
+        AddTunnelRequest(label="--apex", service_url="http://nas")
+    with pytest.raises(ValidationError):
+        AddTunnelRequest(label="--allow=attacker@example.com", service_url="http://nas")
+
+
+def test_add_request_rejects_uppercase_or_empty_label() -> None:
+    for label in ("", "MyTunnel", "-svc", "svc_1", "svc.example", "a" * 64):
+        with pytest.raises(ValidationError):
+            AddTunnelRequest(label=label, service_url="http://nas")
+
+
+def test_add_request_rejects_non_http_service_url() -> None:
+    for url in ("ftp://nas", "file:///etc/passwd", "nas", "http://"):
+        with pytest.raises(ValidationError):
+            AddTunnelRequest(label="svc", service_url=url)
+
+
+def test_add_request_accepts_valid_input() -> None:
+    req = AddTunnelRequest(label="my-tunnel-1", service_url="http://localhost:8080")
+    assert req.label == "my-tunnel-1"
+    assert req.service_url == "http://localhost:8080"
+
+
+def test_update_request_rejects_option_like_label() -> None:
+    with pytest.raises(ValidationError):
+        UpdateTunnelRequest(label="--apex")
+    with pytest.raises(ValidationError):
+        UpdateTunnelRequest(service_url="ftp://nas")
+
+
+def test_update_request_allows_omitted_fields() -> None:
+    req = UpdateTunnelRequest(auth_mode="none")
+    assert req.label is None
+    assert req.service_url is None
