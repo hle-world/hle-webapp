@@ -8,6 +8,7 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
@@ -187,20 +188,86 @@ async def download_tunnel_logs(tunnel_id: str, lines: int = 2000):
 
 FAVICON_DIR = DATA_DIR / "favicons"
 
+# Favicon bytes are rendered on the management origin, so they must be inert:
+# raster formats only (never SVG, which can carry script), confirmed by magic
+# bytes, and never larger than this.
+MAX_FAVICON_BYTES = 256 * 1024
+
+_FAVICON_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\x00\x00\x01\x00", "image/x-icon"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_image(data: bytes) -> str | None:
+    """Return the media type for a supported raster image, or ``None``.
+
+    The upstream ``Content-Type`` is deliberately ignored — the upstream is
+    attacker controlled — and the format is decided purely by magic bytes.
+    This is what keeps SVG (and any other script-bearing content) from ever
+    being served from the management origin.
+    """
+    for magic, media_type in _FAVICON_MAGIC:
+        if data.startswith(magic):
+            return media_type
+    return None
+
+
+def _url_origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _favicon_response(data: bytes, media_type: str) -> Response:
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+async def _fetch_same_origin(client, url: str, origin: str, max_redirects: int = 5):
+    """GET ``url``, following only redirects that stay on ``origin``.
+
+    Following the upstream's redirect to another host would be SSRF, so a
+    cross-origin ``Location`` (or too many hops) returns ``None`` and the
+    caller treats it as "no favicon".
+    """
+    for _ in range(max_redirects + 1):
+        resp = await client.get(url, follow_redirects=False)
+        if not resp.is_redirect:
+            return resp
+        location = resp.headers.get("location")
+        if not location:
+            return resp
+        url = str(resp.url.join(location))
+        if _url_origin(url) != origin:
+            return None
+    return None
+
 
 @app.get("/api/tunnels/{tunnel_id}/favicon")
 async def get_tunnel_favicon(tunnel_id: str):
-    """Return the favicon from the tunnel's local service, cached on disk."""
+    """Return the favicon from the tunnel's local service, cached on disk.
+
+    Only PNG/ICO/JPEG/GIF are served, confirmed by magic bytes — never SVG —
+    because these bytes render on the management origin. Responses are capped
+    in size and sent with ``nosniff`` and a sandboxing CSP, and only
+    same-origin URLs are ever fetched.
+    """
     # Serve from cache if available
     cached = FAVICON_DIR / tunnel_id
     if cached.exists():
         data = cached.read_bytes()
-        ct = "image/x-icon"
-        if data[:8] == b"\x89PNG\r\n\x1a\n":
-            ct = "image/png"
-        elif data[:5] in (b"<?xml", b"<svg "):
-            ct = "image/svg+xml"
-        return Response(content=data, media_type=ct)
+        media_type = _sniff_image(data)
+        if media_type is not None and 0 < len(data) <= MAX_FAVICON_BYTES:
+            return _favicon_response(data, media_type)
 
     # Look up tunnel config to get service_url
     status = tm.get_tunnel(tunnel_id)
@@ -208,6 +275,7 @@ async def get_tunnel_favicon(tunnel_id: str):
         raise HTTPException(status_code=404, detail="Tunnel not found")
 
     service_url = status.service_url.rstrip("/")
+    origin = _url_origin(service_url)
 
     # Common favicon paths — services like Jellyfin use /web/favicon.ico
     favicon_paths = [
@@ -217,34 +285,29 @@ async def get_tunnel_favicon(tunnel_id: str):
         "/favicon.svg",
     ]
 
-    async with httpx.AsyncClient(timeout=5, verify=False) as client:  # nosec B501 — local LAN services often use self-signed certs
-        icon_data: bytes | None = None
-        icon_ct = "image/x-icon"
+    icon_data: bytes | None = None
+    icon_media = "image/x-icon"
 
+    async with httpx.AsyncClient(timeout=5, verify=False) as client:  # nosec B501 — local LAN services often use self-signed certs
         for path in favicon_paths:
             try:
-                resp = await client.get(f"{service_url}{path}", follow_redirects=True)
-                if resp.status_code == 200 and len(resp.content) > 0:
-                    ct_header = resp.headers.get("content-type", "")
-                    if (
-                        "image" in ct_header
-                        or "octet-stream" in ct_header
-                        or resp.content[:4] in (b"\x00\x00\x01\x00", b"\x89PNG")
-                    ):
-                        icon_data = resp.content
-                        if "png" in ct_header:
-                            icon_ct = "image/png"
-                        elif "svg" in ct_header:
-                            icon_ct = "image/svg+xml"
-                        break
+                resp = await _fetch_same_origin(client, f"{service_url}{path}", origin)
             except Exception:
-                pass
+                continue
+            if resp is None or resp.status_code != 200:
+                continue
+            data = resp.content
+            media_type = _sniff_image(data)
+            if media_type is not None and 0 < len(data) <= MAX_FAVICON_BYTES:
+                icon_data = data
+                icon_media = media_type
+                break
 
         # Fallback: parse <link rel="icon"> from HTML
         if icon_data is None:
             try:
-                resp = await client.get(service_url, follow_redirects=True)
-                if resp.status_code == 200:
+                resp = await _fetch_same_origin(client, service_url, origin)
+                if resp is not None and resp.status_code == 200:
                     html = resp.text[:8192]  # only scan the head
                     match = re.search(
                         r'<link[^>]+rel=["\'](?:shortcut )?icon["\'][^>]+href=["\']([^"\']+)',
@@ -252,25 +315,20 @@ async def get_tunnel_favicon(tunnel_id: str):
                         re.IGNORECASE,
                     )
                     if match:
-                        href = match.group(1)
-                        # Resolve relative to final URL (after redirects)
-                        base_url = str(resp.url).rstrip("/")
-                        if href.startswith("//"):
-                            href = "http:" + href
-                        elif href.startswith("/"):
-                            # Absolute path — use service origin
-                            href = service_url + href
-                        elif not href.startswith("http"):
-                            # Relative path — resolve against final URL
-                            href = base_url + "/" + href
-                        icon_resp = await client.get(href, follow_redirects=True)
-                        if icon_resp.status_code == 200 and len(icon_resp.content) > 0:
-                            icon_data = icon_resp.content
-                            ct_header = icon_resp.headers.get("content-type", "")
-                            if "png" in ct_header:
-                                icon_ct = "image/png"
-                            elif "svg" in ct_header:
-                                icon_ct = "image/svg+xml"
+                        # Resolve relative to the (same-origin) final URL and
+                        # refuse anything that escapes the service's origin.
+                        href = str(resp.url.join(match.group(1)))
+                        if _url_origin(href) == origin:
+                            icon_resp = await _fetch_same_origin(client, href, origin)
+                            if icon_resp is not None and icon_resp.status_code == 200:
+                                data = icon_resp.content
+                                media_type = _sniff_image(data)
+                                if (
+                                    media_type is not None
+                                    and 0 < len(data) <= MAX_FAVICON_BYTES
+                                ):
+                                    icon_data = data
+                                    icon_media = media_type
             except Exception:
                 pass
 
@@ -281,7 +339,7 @@ async def get_tunnel_favicon(tunnel_id: str):
     FAVICON_DIR.mkdir(parents=True, exist_ok=True)
     cached.write_bytes(icon_data)
 
-    return Response(content=icon_data, media_type=icon_ct)
+    return _favicon_response(icon_data, icon_media)
 
 
 # ---------------------------------------------------------------------------
