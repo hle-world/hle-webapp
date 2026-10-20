@@ -9,6 +9,7 @@ upstream so nothing touches the network.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import sys
@@ -43,6 +44,22 @@ class _FakeResponse:
         self.text = content.decode("utf-8", "replace")
         self.is_redirect = 300 <= status_code < 400 and "location" in self.headers
 
+    async def aiter_bytes(self):
+        # Small chunks so the streaming size cap is exercised mid-body.
+        for start in range(0, len(self.content), 64 * 1024):
+            yield self.content[start : start + 64 * 1024]
+
+
+class _Stream:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
 
 class _FakeClient:
     def __init__(self, routes):
@@ -55,12 +72,12 @@ class _FakeClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def get(self, url, follow_redirects=False):
+    def stream(self, method, url, follow_redirects=False):
         self.requested.append(str(url))
         handler = self._routes.get(str(url))
         if handler is None:
-            return _FakeResponse(url, status_code=404)
-        return handler(str(url))
+            return _Stream(_FakeResponse(url, status_code=404))
+        return _Stream(handler(str(url)))
 
 
 class _Factory:
@@ -262,3 +279,22 @@ def test_oversized_image_is_rejected(main, tmp_path, monkeypatch) -> None:
     resp = _authed(main, tmp_path).get("/api/tunnels/t1/favicon")
 
     assert resp.status_code == 404
+
+
+def test_declared_oversized_body_is_not_read(main, tmp_path, monkeypatch) -> None:
+    _write_tunnel(tmp_path)
+    declared = {"content-type": "image/png", "content-length": str(10**9)}
+    routes = {f"{SERVICE_URL}/favicon.ico": lambda url: _FakeResponse(url, 200, PNG, declared)}
+    routes[SERVICE_URL] = lambda url: _FakeResponse(url, 404)
+    _install(main, monkeypatch, routes)
+
+    resp = _authed(main, tmp_path).get("/api/tunnels/t1/favicon")
+
+    assert resp.status_code == 404
+
+
+def test_read_capped_stops_past_the_limit(main) -> None:
+    body = _FakeResponse("http://svc/x", 200, b"x" * (300 * 1024))
+
+    assert asyncio.run(main._read_capped(body, 256 * 1024)) is None
+    assert asyncio.run(main._read_capped(body, 400 * 1024)) == body.content
