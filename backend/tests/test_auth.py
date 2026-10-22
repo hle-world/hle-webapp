@@ -477,3 +477,19 @@ def test_create_and_update_do_not_echo_secrets(main, tmp_path) -> None:
     assert cleared.status_code == 200
     assert cleared.json()["api_key_set"] is False
     assert cleared.json()["has_upstream_basic_auth"] is False
+
+
+def test_saved_api_key_config_is_owner_only(main, tmp_path, monkeypatch) -> None:
+    async def _noop() -> None:
+        return None
+
+    monkeypatch.setattr(tm, "restore_all", _noop)
+    config = tmp_path / "hle_config.json"
+    monkeypatch.setattr(main, "HLE_CONFIG", config)
+    config.write_text("{}")
+    config.chmod(0o644)
+    client = _authed(main, tmp_path)
+    resp = client.post("/api/config", json={"api_key": "hle_" + "z" * 28})
+    assert resp.status_code == 204
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert json.loads(config.read_text())["api_key"] == "hle_" + "z" * 28
