@@ -11,6 +11,8 @@ on:
   workflow_run:
     workflows: ["Test"]
     types: [completed]
+    # Filter is only to avoid starting skipped runs; the job's `if:` head_repository check remains the security control.
+    branches: ['chore/sync-client-*']
 
 permissions:
   contents: read
